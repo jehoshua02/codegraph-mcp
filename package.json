@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "index": "node src/cli.js index",
-    "test": "node --test src/**/*.test.js"
+    "test": "node --test test/*.test.js test/**/*.test.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

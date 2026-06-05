@@ -254,8 +254,8 @@ function walkForCalls(node, namespace, filePath, edges, context) {
       if (caller) edges.push({ source: caller, target, type: 'CALLS' });
     }
   } else if (node.type === 'object_creation_expression') {
-    const classNode = node.childForFieldName('class');
-    if (classNode && (classNode.type === 'name' || classNode.type === 'qualified_name')) {
+    const classNode = node.childForFieldName('class') ?? node.childForFieldName('name') ?? node.children.find(c => c.type === 'name' || c.type === 'qualified_name');
+    if (classNode) {
       const caller = findEnclosingSymbol(node, namespace);
       const target = resolveClassName(classNode.text, namespace, context, filePath);
       if (caller) edges.push({ source: caller, target: `${target}::__construct`, type: 'CALLS' });

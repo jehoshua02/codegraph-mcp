@@ -41,7 +41,7 @@ function extractUseStatements(node, edges, imports, filePath) {
 
   for (const child of node.children) {
     if (child.type === 'namespace_use_clause') {
-      const nameNode = child.childForFieldName('name') ?? child.children.find(c => c.type === 'namespace_name' || c.type === 'qualified_name');
+      const nameNode = child.childForFieldName('name') ?? child.children.find(c => c.type === 'namespace_name' || c.type === 'qualified_name' || c.type === 'name');
       if (!nameNode) continue;
 
       const fullName = prefix ? `${prefix}\\${nameNode.text}` : nameNode.text;
@@ -53,7 +53,7 @@ function extractUseStatements(node, edges, imports, filePath) {
     } else if (child.type === 'namespace_use_group') {
       for (const clause of child.children) {
         if (clause.type === 'namespace_use_clause') {
-          const nameNode = clause.childForFieldName('name') ?? clause.children.find(c => c.type === 'namespace_name');
+          const nameNode = clause.childForFieldName('name') ?? clause.children.find(c => c.type === 'namespace_name' || c.type === 'name');
           if (!nameNode) continue;
 
           const fullName = prefix ? `${prefix}\\${nameNode.text}` : nameNode.text;
