@@ -1,0 +1,25 @@
+{
+  "name": "codegraph-mcp",
+  "version": "0.1.0",
+  "description": "Pluggable code intelligence graph. Fast parallel indexing, extensible extractors, MCP interface.",
+  "type": "module",
+  "main": "src/index.js",
+  "bin": {
+    "codegraph-mcp": "src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "index": "node src/cli.js index",
+    "test": "node --test src/**/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "better-sqlite3": "^11.9.1",
+    "web-tree-sitter": "^0.24.7",
+    "tree-sitter-php": "^0.23.12"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

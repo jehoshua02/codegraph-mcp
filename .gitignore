@@ -1,0 +1,5 @@
+node_modules/
+.codegraph/
+*.db
+output/
+build.log

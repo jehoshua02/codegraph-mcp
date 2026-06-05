@@ -1,0 +1,167 @@
+import Database from 'better-sqlite3';
+
+export function openReadOnly(dbPath) {
+  return new Database(dbPath, { readonly: true });
+}
+
+export function symbolSearch(db, { name, type, file_pattern, limit = 50 }) {
+  let sql = 'SELECT * FROM nodes WHERE 1=1';
+  const params = [];
+
+  if (name) {
+    sql += ' AND (name LIKE ? OR qualified_name LIKE ?)';
+    params.push(`%${name}%`, `%${name}%`);
+  }
+  if (type) {
+    sql += ' AND type = ?';
+    params.push(type);
+  }
+  if (file_pattern) {
+    sql += ' AND file_path LIKE ?';
+    params.push(`%${file_pattern}%`);
+  }
+  sql += ' LIMIT ?';
+  params.push(limit);
+
+  return db.prepare(sql).all(...params).map(parseMetadata);
+}
+
+export function symbolInbound(db, { qualified_name, edge_type, limit = 50 }) {
+  let sql = `
+    SELECT n.*, e.type as edge_type, e.metadata as edge_metadata
+    FROM edges e
+    JOIN nodes n ON n.id = e.source_id
+    JOIN nodes target ON target.id = e.target_id
+    WHERE target.qualified_name = ?
+  `;
+  const params = [qualified_name];
+
+  if (edge_type) {
+    sql += ' AND e.type = ?';
+    params.push(edge_type);
+  }
+  sql += ' LIMIT ?';
+  params.push(limit);
+
+  return db.prepare(sql).all(...params).map(row => ({
+    ...parseMetadata(row),
+    edge_type: row.edge_type,
+    edge_metadata: row.edge_metadata ? JSON.parse(row.edge_metadata) : null,
+  }));
+}
+
+export function symbolOutbound(db, { qualified_name, edge_type, limit = 50 }) {
+  let sql = `
+    SELECT n.*, e.type as edge_type, e.metadata as edge_metadata
+    FROM edges e
+    JOIN nodes n ON n.id = e.target_id
+    JOIN nodes source ON source.id = e.source_id
+    WHERE source.qualified_name = ?
+  `;
+  const params = [qualified_name];
+
+  if (edge_type) {
+    sql += ' AND e.type = ?';
+    params.push(edge_type);
+  }
+  sql += ' LIMIT ?';
+  params.push(limit);
+
+  return db.prepare(sql).all(...params).map(row => ({
+    ...parseMetadata(row),
+    edge_type: row.edge_type,
+    edge_metadata: row.edge_metadata ? JSON.parse(row.edge_metadata) : null,
+  }));
+}
+
+export function symbolTrace(db, { qualified_name, direction = 'inbound', edge_type, depth = 3, limit = 100 }) {
+  const results = [];
+  const visited = new Set();
+  const queue = [{ qn: qualified_name, hop: 0 }];
+
+  while (queue.length > 0) {
+    const { qn, hop } = queue.shift();
+    if (hop > depth || visited.has(qn)) continue;
+    visited.add(qn);
+
+    const neighbors = direction === 'inbound'
+      ? symbolInbound(db, { qualified_name: qn, edge_type, limit: 200 })
+      : symbolOutbound(db, { qualified_name: qn, edge_type, limit: 200 });
+
+    for (const n of neighbors) {
+      if (!visited.has(n.qualified_name)) {
+        results.push({ ...n, hop: hop + 1 });
+        queue.push({ qn: n.qualified_name, hop: hop + 1 });
+      }
+    }
+
+    if (results.length >= limit) break;
+  }
+
+  return results.slice(0, limit);
+}
+
+export function symbolUnreferenced(db, { node_type, edge_type, limit = 100 }) {
+  let sql = `
+    SELECT n.* FROM nodes n
+    WHERE n.id NOT IN (
+      SELECT DISTINCT e.target_id FROM edges e
+  `;
+  const params = [];
+
+  if (edge_type) {
+    sql += ' WHERE e.type = ?';
+    params.push(edge_type);
+  }
+  sql += ')';
+
+  if (node_type) {
+    sql += ' AND n.type = ?';
+    params.push(node_type);
+  }
+  sql += ' LIMIT ?';
+  params.push(limit);
+
+  return db.prepare(sql).all(...params).map(parseMetadata);
+}
+
+export function edgeSearch(db, { type, source, target, limit = 50 }) {
+  let sql = `
+    SELECT e.*, s.qualified_name as source_qn, s.name as source_name, s.type as source_type,
+           t.qualified_name as target_qn, t.name as target_name, t.type as target_type
+    FROM edges e
+    JOIN nodes s ON s.id = e.source_id
+    JOIN nodes t ON t.id = e.target_id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (type) { sql += ' AND e.type = ?'; params.push(type); }
+  if (source) { sql += ' AND s.qualified_name LIKE ?'; params.push(`%${source}%`); }
+  if (target) { sql += ' AND t.qualified_name LIKE ?'; params.push(`%${target}%`); }
+  sql += ' LIMIT ?';
+  params.push(limit);
+
+  return db.prepare(sql).all(...params).map(row => ({
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+  }));
+}
+
+export function graphStats(db) {
+  const nodeStats = db.prepare('SELECT type, COUNT(*) as count FROM nodes GROUP BY type ORDER BY count DESC').all();
+  const edgeStats = db.prepare('SELECT type, COUNT(*) as count FROM edges GROUP BY type ORDER BY count DESC').all();
+  const typeRegistry = db.prepare('SELECT * FROM type_registry ORDER BY extractor, kind, type').all();
+  const totals = {
+    nodes: db.prepare('SELECT COUNT(*) as count FROM nodes').get().count,
+    edges: db.prepare('SELECT COUNT(*) as count FROM edges').get().count,
+  };
+  return { totals, nodeStats, edgeStats, typeRegistry };
+}
+
+function parseMetadata(row) {
+  if (row.metadata && typeof row.metadata === 'string') {
+    try { row.metadata = JSON.parse(row.metadata); } catch { /* keep as string */ }
+  }
+  return row;
+}

@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { z } from 'zod';
+import { resolve } from 'path';
+import { index } from './indexer.js';
+import { openReadOnly, symbolSearch, symbolInbound, symbolOutbound, symbolTrace, symbolUnreferenced, edgeSearch, graphStats } from './queries.js';
+
+const server = new McpServer({
+  name: 'codegraph-mcp',
+  version: '0.1.0',
+});
+
+let dbPath = resolve(process.env.CODEGRAPH_DB || '.codegraph/graph.db');
+
+function withDb(fn) {
+  const db = openReadOnly(dbPath);
+  try {
+    return fn(db);
+  } finally {
+    db.close();
+  }
+}
+
+server.tool('index_rebuild', { directory: z.string(), db_path: z.string().optional() }, async ({ directory, db_path }) => {
+  if (db_path) dbPath = resolve(db_path);
+  const result = await index(resolve(directory), dbPath);
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+});
+
+server.tool('symbol_search', { name: z.string().optional(), type: z.string().optional(), file_pattern: z.string().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => symbolSearch(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('symbol_inbound', { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => symbolInbound(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('symbol_outbound', { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => symbolOutbound(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('symbol_trace', { qualified_name: z.string(), direction: z.enum(['inbound', 'outbound']).optional(), edge_type: z.string().optional(), depth: z.number().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => symbolTrace(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('symbol_unreferenced', { node_type: z.string().optional(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => symbolUnreferenced(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('edge_search', { type: z.string().optional(), source: z.string().optional(), target: z.string().optional(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => edgeSearch(db, params));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('graph_stats', {}, async () => {
+  const results = withDb(db => graphStats(db));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+const transport = new StdioServerTransport();
+await server.connect(transport);
