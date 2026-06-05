@@ -13,7 +13,8 @@ export default {
 };
 
 function extractNamespace(rootNode) {
-  for (const child of rootNode.children) {
+  for (let i = 0; i < rootNode.childCount; i++) {
+    const child = rootNode.child(i);
     if (child.type === 'namespace_definition') {
       const nameNode = child.childForFieldName('name');
       if (nameNode) return nameNode.text;
@@ -40,7 +41,8 @@ function findEnclosingSymbol(node, namespace) {
   while (current) {
     if (current.type === 'method_declaration') {
       const methodName = current.childForFieldName('name')?.text;
-      let classNode = current.parent?.parent;
+      let classNode = current.parent;
+      while (classNode && classNode.type === 'declaration_list') classNode = classNode.parent;
       if (classNode && (classNode.type === 'class_declaration' || classNode.type === 'trait_declaration' || classNode.type === 'interface_declaration' || classNode.type === 'enum_declaration')) {
         const className = classNode.childForFieldName('name')?.text;
         if (className && methodName) return `${qualify(namespace, className)}::${methodName}`;
@@ -95,7 +97,7 @@ function walkForCalls(node, namespace, filePath, edges, context) {
     }
   }
 
-  for (const child of node.children) {
-    walkForCalls(child, namespace, filePath, edges, context);
+  for (let i = 0; i < node.childCount; i++) {
+    walkForCalls(node.child(i), namespace, filePath, edges, context);
   }
 }
