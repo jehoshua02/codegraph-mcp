@@ -49,7 +49,7 @@ server.tool('symbol_trace', { qualified_name: z.string(), direction: z.enum(['in
   return { content: [{ type: 'text', text: JSON.stringify(results) }] };
 });
 
-server.tool('symbol_unreferenced', { node_type: z.string().optional(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
+server.tool('symbol_unreferenced', { node_type: z.string().optional(), edge_type: z.string().optional(), exclude_structural: z.boolean().optional(), limit: z.number().optional() }, async (params) => {
   const results = withDb(db => symbolUnreferenced(db, params));
   return { content: [{ type: 'text', text: JSON.stringify(results) }] };
 });

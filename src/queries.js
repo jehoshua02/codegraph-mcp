@@ -101,17 +101,25 @@ export function symbolTrace(db, { qualified_name, direction = 'inbound', edge_ty
   return results.slice(0, limit);
 }
 
-export function symbolUnreferenced(db, { node_type, edge_type, limit = 100 }) {
+const STRUCTURAL_EDGES = ['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS'];
+
+export function symbolUnreferenced(db, { node_type, edge_type, exclude_structural = true, limit = 100 }) {
+  const excludeTypes = exclude_structural ? STRUCTURAL_EDGES : [];
   let sql = `
     SELECT n.* FROM nodes n
     WHERE n.id NOT IN (
       SELECT DISTINCT e.target_id FROM edges e
+      WHERE 1=1
   `;
   const params = [];
 
   if (edge_type) {
-    sql += ' WHERE e.type = ?';
+    sql += ' AND e.type = ?';
     params.push(edge_type);
+  }
+  if (excludeTypes.length > 0) {
+    sql += ` AND e.type NOT IN (${excludeTypes.map(() => '?').join(',')})`;
+    params.push(...excludeTypes);
   }
   sql += ')';
 
