@@ -10,8 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "index": "node src/cli.js index",
-    "test": "node --test test/extractors/*.test.js test/*.test.js",
-    "test:unit": "node --test test/extractors/*.test.js",
+    "test": "node --test test/extractors/*.test.js test/extractors/**/*.test.js test/*.test.js",
+    "test:unit": "node --test test/extractors/*.test.js test/extractors/**/*.test.js",
     "test:integration": "node --test test/*.test.js"
   },
   "dependencies": {

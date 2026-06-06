@@ -5,8 +5,9 @@ import { basename } from 'path';
 
 import fileExtractor from './extractors/core/file.js';
 import phpExtractors from './extractors/plugins/php/index.js';
+import laravelExtractors from './extractors/plugins/laravel/index.js';
 
-const BUILT_IN_EXTRACTORS = [fileExtractor, ...phpExtractors];
+const BUILT_IN_EXTRACTORS = [fileExtractor, ...phpExtractors, ...laravelExtractors];
 
 async function parseFiles(files) {
   const parsed = [];
