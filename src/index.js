@@ -23,14 +23,14 @@ function withDb(fn) {
   }
 }
 
-const SCHEMA_DESCRIPTION = `Schema: nodes(id, type, name, qualified_name, file_path, start_line, end_line, metadata JSON), edges(id, source_id, target_id, type, metadata JSON), type_registry(type, kind, extractor, description). Node types: File, Class, Method, Function, Interface, Trait, Enum, Constant, Property. Edge types: DEFINES, HAS_METHOD, HAS_PROPERTY, IMPORTS, EXTENDS, IMPLEMENTS, USES_TRAIT, CALLS.`;
+const SCHEMA_DESCRIPTION = `Schema: nodes(id, type, name, qualified_name, file_path, start_line, end_line, metadata JSON), edges(id, source_id, target_id, type, metadata JSON), type_registry(type, kind, extractor, description). Node types: Project, File, Class, Method, Function, Interface, Trait, Enum, Constant, Property. Edge types: CONTAINS_FILE, DEFINES, HAS_METHOD, HAS_PROPERTY, IMPORTS, EXTENDS, IMPLEMENTS, USES_TRAIT, CALLS.`;
 
 server.tool('index_rebuild',
-  'Full reindex of a directory. Clears existing graph and rebuilds.',
-  { directory: z.string(), db_path: z.string().optional() },
-  async ({ directory, db_path }) => {
+  'Reindex a directory as a project. Only clears that project, preserving other indexed projects. Project name defaults to directory basename.',
+  { directory: z.string(), project: z.string().optional(), db_path: z.string().optional() },
+  async ({ directory, project, db_path }) => {
     if (db_path) dbPath = resolve(db_path);
-    const result = await index(resolve(directory), dbPath);
+    const result = await index(resolve(directory), dbPath, { project });
     return { content: [{ type: 'text', text: JSON.stringify(result) }] };
   }
 );

@@ -1,19 +1,21 @@
 import { discoverFiles, readFiles } from './reader.js';
 import { parse, languageForFile } from './parser.js';
-import { openDb, initSchema, clearGraph, insertNodes, insertEdges, registerTypes, buildNodeIdMap } from './db.js';
+import { openDb, initSchema, clearProject, insertNodes, insertEdges, registerTypes, buildNodeIdMap } from './db.js';
+import { basename } from 'path';
 
 import fileExtractor from './extractors/core/file.js';
 import phpExtractors from './extractors/plugins/php/index.js';
 
 const BUILT_IN_EXTRACTORS = [fileExtractor, ...phpExtractors];
 
-export async function index(rootDir, dbPath, pluginExtractors = []) {
+export async function index(rootDir, dbPath, { project, pluginExtractors = [] } = {}) {
   const start = performance.now();
+  const projectName = project || basename(rootDir);
   const extractors = [...BUILT_IN_EXTRACTORS, ...pluginExtractors];
 
   const db = openDb(dbPath);
   initSchema(db);
-  clearGraph(db);
+  clearProject(db, projectName);
 
   for (const ext of extractors) {
     registerTypes(db, ext.name, ext.types);
@@ -22,9 +24,11 @@ export async function index(rootDir, dbPath, pluginExtractors = []) {
   const filePaths = await discoverFiles(rootDir);
   const files = await readFiles(filePaths);
 
-  const allNodes = [];
+  const allNodes = [
+    { type: 'Project', name: projectName, qualified_name: `project::${projectName}`, file_path: rootDir, start_line: null, end_line: null },
+  ];
   const allEdges = [];
-  const context = { importMap: new Map() };
+  const context = { importMap: new Map(), project: projectName };
 
   // Parse all files and collect trees
   const parsed = [];
@@ -74,5 +78,5 @@ export async function index(rootDir, dbPath, pluginExtractors = []) {
   const edgeCount = db.prepare('SELECT COUNT(*) as count FROM edges').get().count;
   db.close();
 
-  return { elapsed, nodeCount, edgeCount, fileCount: files.length };
+  return { project: projectName, elapsed, nodeCount, edgeCount, fileCount: files.length };
 }

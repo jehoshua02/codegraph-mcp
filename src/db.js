@@ -51,6 +51,33 @@ export function initSchema(db) {
   `);
 }
 
+export function clearProject(db, project) {
+  const nodeIds = db.prepare("SELECT id FROM nodes WHERE type = 'Project' AND name = ?").all(project).map(r => r.id);
+  if (nodeIds.length === 0) return;
+
+  for (const pid of nodeIds) {
+    const fileIds = db.prepare("SELECT target_id as id FROM edges WHERE source_id = ? AND type = 'CONTAINS_FILE'").all(pid).map(r => r.id);
+    const allIds = [pid, ...fileIds];
+
+    // Find all nodes defined in these files
+    const definedIds = db.prepare(
+      `SELECT target_id as id FROM edges WHERE source_id IN (${fileIds.map(() => '?').join(',')}) AND type = 'DEFINES'`
+    ).all(...fileIds).map(r => r.id);
+
+    // Find all nodes that are children of defined nodes (methods, properties)
+    const childIds = db.prepare(
+      `SELECT target_id as id FROM edges WHERE source_id IN (${definedIds.map(() => '?').join(',')}) AND type IN ('HAS_METHOD', 'HAS_PROPERTY')`
+    ).all(...definedIds).map(r => r.id);
+
+    const removeIds = [...allIds, ...definedIds, ...childIds];
+    if (removeIds.length === 0) return;
+
+    const placeholders = removeIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`).run(...removeIds, ...removeIds);
+    db.prepare(`DELETE FROM nodes WHERE id IN (${placeholders})`).run(...removeIds);
+  }
+}
+
 export function clearGraph(db) {
   db.exec('DELETE FROM edges; DELETE FROM nodes; DELETE FROM type_registry;');
 }

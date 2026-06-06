@@ -16,7 +16,7 @@ describe('integration', () => {
   before(async () => {
     mkdirSync(dirname(DB_PATH), { recursive: true });
     if (existsSync(DB_PATH)) unlinkSync(DB_PATH);
-    result = await index(FIXTURES, DB_PATH);
+    result = await index(FIXTURES, DB_PATH, { project: 'test-fixtures' });
   });
 
   after(() => {
@@ -32,6 +32,7 @@ describe('integration', () => {
     const stats = graphStats(db);
     const nodeMap = Object.fromEntries(stats.nodeStats.map(s => [s.type, s.count]));
 
+    assert.equal(nodeMap.Project, 1);
     assert.equal(nodeMap.File, 9);
     assert.equal(nodeMap.Class, 5);
     assert.equal(nodeMap.Interface, 1);
@@ -47,6 +48,7 @@ describe('integration', () => {
     const stats = graphStats(db);
     const edgeMap = Object.fromEntries(stats.edgeStats.map(s => [s.type, s.count]));
 
+    assert.equal(edgeMap.CONTAINS_FILE, 9);
     assert.ok(edgeMap.DEFINES > 0);
     assert.ok(edgeMap.HAS_METHOD > 0);
     assert.ok(edgeMap.CALLS > 0);
@@ -158,5 +160,21 @@ describe('integration', () => {
 
   it('completes indexing in under 5 seconds', () => {
     assert.ok(parseFloat(result.elapsed) < 5, `Indexing took ${result.elapsed}s`);
+  });
+
+  it('reindexing a project preserves other projects', async () => {
+    // Index same fixtures as a second project
+    await index(FIXTURES, DB_PATH, { project: 'second-project' });
+    const db = openReadOnly(DB_PATH);
+    const projects = db.prepare("SELECT name FROM nodes WHERE type = 'Project' ORDER BY name").all();
+    assert.equal(projects.length, 2);
+    assert.equal(projects[0].name, 'second-project');
+    assert.equal(projects[1].name, 'test-fixtures');
+
+    // Reindex second project — first project should survive
+    await index(FIXTURES, DB_PATH, { project: 'second-project' });
+    const projectsAfter = db.prepare("SELECT name FROM nodes WHERE type = 'Project' ORDER BY name").all();
+    assert.equal(projectsAfter.length, 2);
+    db.close();
   });
 });
