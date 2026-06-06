@@ -2,7 +2,7 @@
 
 Pluggable code intelligence graph. Fast parallel indexing, extensible extractors, MCP interface.
 
-## Setup
+## 1 Install
 
 ```bash
 git clone git@github.com:jehoshua02/codegraph-mcp.git
@@ -10,48 +10,54 @@ cd codegraph-mcp
 npm ci
 ```
 
-## Usage
+## 2 Configure MCP
 
-### Index a codebase
-
-```bash
-node src/cli.js index /path/to/codebase .codegraph/graph.db
-```
-
-### Run as MCP server
-
-Add to your `.mcp.json` or Claude Code MCP config:
+Add to `~/.claude/.mcp.json` (user-level) or `<project>/.mcp.json` (project-level):
 
 ```json
 {
   "mcpServers": {
     "codegraph-mcp": {
       "command": "node",
-      "args": ["/path/to/codegraph-mcp/src/index.js"],
+      "args": ["<path-to-codegraph-mcp>/src/index.js"],
       "env": {
-        "CODEGRAPH_DB": "/path/to/codebase/.codegraph/graph.db"
+        "CODEGRAPH_DB": "<path-to-store-graph>/graph.db"
       }
     }
   }
 }
 ```
 
-## MCP Tools
+Restart Claude Code to activate.
+
+## 3 Index a Codebase
+
+Use the `index_rebuild` MCP tool from within Claude Code:
+
+> "Index the codebase at /path/to/project"
+
+Or via CLI:
+
+```bash
+node src/cli.js index /path/to/codebase /path/to/graph.db
+```
+
+## 4 MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `index_rebuild` | Reindex a directory (full rebuild) |
-| `symbol_search` | Find symbols by name, type, file pattern |
-| `symbol_inbound` | Symbols with edges pointing to a target (filterable by edge type) |
-| `symbol_outbound` | Symbols a source points to (filterable by edge type) |
-| `symbol_trace` | Multi-hop BFS traversal (configurable depth, direction, edge type) |
-| `symbol_unreferenced` | Symbols with zero inbound edges (filterable by node/edge type) |
+| `index_rebuild` | Full reindex of a directory |
+| `symbol_search` | Find symbols by name, type, or file pattern |
+| `symbol_inbound` | Find all symbols pointing to a target (filterable by edge type) |
+| `symbol_outbound` | Find all symbols a source points to (filterable by edge type) |
+| `symbol_trace` | Multi-hop BFS traversal (configurable depth, direction, edge type filter) |
+| `symbol_unreferenced` | Symbols with zero inbound edges (excludes structural edges by default) |
 | `edge_search` | Find edges by type, source, or target |
-| `graph_stats` | Node/edge counts by type, with extractor provenance |
+| `graph_stats` | Node/edge counts by type with extractor provenance |
 
-## Extractors
+## 5 What Gets Indexed
 
-### Built-in
+### 5.1 Built-in Extractors
 
 | Extractor | Nodes | Edges |
 |-----------|-------|-------|
@@ -61,9 +67,20 @@ Add to your `.mcp.json` or Claude Code MCP config:
 | `core:inheritance` | — | EXTENDS, IMPLEMENTS, USES_TRAIT |
 | `core:call` | — | CALLS |
 
-### Custom extractors
+### 5.2 Call Resolution
 
-Add extractors via `.codegraph/config.json`:
+The call extractor resolves:
+- Static calls: `Foo::bar()`
+- Self/static/parent calls: `self::bar()`, `static::bar()`, `parent::bar()`
+- Instance calls via `$this`: `$this->bar()`
+- Typed parameter calls: `function foo(User $user) { $user->save(); }`
+- Constructor-promoted property calls: `$this->repo->find()`
+- Constructor calls: `new User()`
+- Function calls: `helper()`
+
+## 6 Custom Extractors
+
+Extractors are pluggable. Add via `.codegraph/config.json` in the indexed project:
 
 ```json
 {
@@ -73,13 +90,13 @@ Add extractors via `.codegraph/config.json`:
 }
 ```
 
-Each extractor exports:
+Each extractor receives the file path, content, and tree-sitter AST:
 
 ```js
 export default {
   name: 'plugin:my-extractor',
   types: [
-    { type: 'MyNodeType', kind: 'node', description: '...' },
+    { type: 'MyNode', kind: 'node', description: '...' },
     { type: 'MY_EDGE', kind: 'edge', description: '...' },
   ],
   fileFilter: (filePath) => filePath.endsWith('.php'),
@@ -89,33 +106,34 @@ export default {
 };
 ```
 
-## Testing
+All node and edge types are traceable to the extractor that created them via `graph_stats`.
+
+## 7 Testing
 
 ```bash
 npm test
 ```
 
-## Query examples (sqlite3)
+## 8 SQLite Schema
+
+The graph is stored in SQLite. You can query it directly:
 
 ```sql
 -- Node counts by type
 SELECT type, COUNT(*) FROM nodes GROUP BY type ORDER BY COUNT(*) DESC;
 
--- Edge counts by type
-SELECT type, COUNT(*) FROM edges GROUP BY type ORDER BY COUNT(*) DESC;
-
 -- Find a class
 SELECT * FROM nodes WHERE type = 'Class' AND name = 'Borrower';
 
 -- Callers of a method
-SELECT n.* FROM edges e
+SELECT n.qualified_name FROM edges e
 JOIN nodes n ON n.id = e.source_id
 JOIN nodes t ON t.id = e.target_id
 WHERE t.qualified_name = 'App\Models\Borrower::getDeal'
 AND e.type = 'CALLS';
 
--- Unreferenced methods (excluding structural edges)
-SELECT n.* FROM nodes n
+-- Unreferenced methods
+SELECT n.qualified_name FROM nodes n
 WHERE n.type = 'Method'
 AND n.id NOT IN (
   SELECT target_id FROM edges
