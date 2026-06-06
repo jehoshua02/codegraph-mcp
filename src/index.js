@@ -23,51 +23,89 @@ function withDb(fn) {
   }
 }
 
-server.tool('index_rebuild', { directory: z.string(), db_path: z.string().optional() }, async ({ directory, db_path }) => {
-  if (db_path) dbPath = resolve(db_path);
-  const result = await index(resolve(directory), dbPath);
-  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
-});
+const SCHEMA_DESCRIPTION = `Schema: nodes(id, type, name, qualified_name, file_path, start_line, end_line, metadata JSON), edges(id, source_id, target_id, type, metadata JSON), type_registry(type, kind, extractor, description). Node types: File, Class, Method, Function, Interface, Trait, Enum, Constant, Property. Edge types: DEFINES, HAS_METHOD, HAS_PROPERTY, IMPORTS, EXTENDS, IMPLEMENTS, USES_TRAIT, CALLS.`;
 
-server.tool('symbol_search', { name: z.string().optional(), type: z.string().optional(), file_pattern: z.string().optional(), count_only: z.boolean().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => symbolSearch(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('index_rebuild',
+  'Full reindex of a directory. Clears existing graph and rebuilds.',
+  { directory: z.string(), db_path: z.string().optional() },
+  async ({ directory, db_path }) => {
+    if (db_path) dbPath = resolve(db_path);
+    const result = await index(resolve(directory), dbPath);
+    return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+  }
+);
 
-server.tool('symbol_inbound', { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => symbolInbound(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('symbol_search',
+  'Find symbols by name, type, or file pattern. Returns {total, results}. Use count_only:true to get just the count.',
+  { name: z.string().optional(), type: z.string().optional(), file_pattern: z.string().optional(), count_only: z.boolean().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => symbolSearch(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('symbol_outbound', { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => symbolOutbound(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('symbol_inbound',
+  'Find all symbols with edges pointing TO this symbol. Filterable by edge_type.',
+  { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => symbolInbound(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('symbol_trace', { qualified_name: z.string(), direction: z.enum(['inbound', 'outbound']).optional(), edge_type: z.string().optional(), depth: z.number().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => symbolTrace(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('symbol_outbound',
+  'Find all symbols this symbol points TO. Filterable by edge_type.',
+  { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => symbolOutbound(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('symbol_unreferenced', { node_type: z.string().optional(), edge_type: z.string().optional(), exclude_structural: z.boolean().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => symbolUnreferenced(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('symbol_trace',
+  'Multi-hop BFS traversal from a symbol. Follow call chains, inheritance, etc.',
+  { qualified_name: z.string(), direction: z.enum(['inbound', 'outbound']).optional(), edge_type: z.string().optional(), depth: z.number().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => symbolTrace(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('edge_search', { type: z.string().optional(), source: z.string().optional(), target: z.string().optional(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => edgeSearch(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('symbol_unreferenced',
+  'Find symbols with zero inbound edges. Excludes structural edges (DEFINES, HAS_METHOD, HAS_PROPERTY, IMPORTS) by default.',
+  { node_type: z.string().optional(), edge_type: z.string().optional(), exclude_structural: z.boolean().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => symbolUnreferenced(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('graph_stats', {}, async () => {
-  const results = withDb(db => graphStats(db));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('edge_search',
+  'Find edges by type, source, or target qualified name pattern.',
+  { type: z.string().optional(), source: z.string().optional(), target: z.string().optional(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => edgeSearch(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
-server.tool('graph_query', { sql: z.string(), limit: z.number().optional() }, async (params) => {
-  const results = withDb(db => graphQuery(db, params));
-  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
-});
+server.tool('graph_stats',
+  'Node/edge counts by type with extractor provenance.',
+  {},
+  async () => {
+    const results = withDb(db => graphStats(db));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
+
+server.tool('graph_query',
+  `Read-only SQL query against the graph. SELECT only. ${SCHEMA_DESCRIPTION}`,
+  { sql: z.string(), limit: z.number().optional() },
+  async (params) => {
+    const results = withDb(db => graphQuery(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
