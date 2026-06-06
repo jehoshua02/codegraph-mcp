@@ -3,12 +3,9 @@ import { parse, languageForFile } from './parser.js';
 import { openDb, initSchema, clearGraph, insertNodes, insertEdges, registerTypes, buildNodeIdMap } from './db.js';
 
 import fileExtractor from './extractors/core/file.js';
-import symbolExtractor from './extractors/core/symbol.js';
-import importExtractor from './extractors/core/imports.js';
-import inheritanceExtractor from './extractors/core/inheritance.js';
-import callExtractor from './extractors/core/calls.js';
+import phpExtractors from './extractors/plugins/php/index.js';
 
-const BUILT_IN_EXTRACTORS = [fileExtractor, symbolExtractor, importExtractor, inheritanceExtractor, callExtractor];
+const BUILT_IN_EXTRACTORS = [fileExtractor, ...phpExtractors];
 
 export async function index(rootDir, dbPath, pluginExtractors = []) {
   const start = performance.now();
@@ -40,10 +37,13 @@ export async function index(rootDir, dbPath, pluginExtractors = []) {
 
   // Pass 1: extract imports to build resolution map
   for (const { filePath, content, tree } of parsed) {
-    const result = importExtractor.extract(filePath, content, tree, context);
-    if (result.imports) {
-      for (const imp of result.imports) {
-        context.importMap.set(`${filePath}::${imp.alias}`, imp.qualified_name);
+    for (const ext of extractors) {
+      if (!ext.fileFilter(filePath)) continue;
+      const result = ext.extract(filePath, content, tree, context);
+      if (result.imports) {
+        for (const imp of result.imports) {
+          context.importMap.set(`${filePath}::${imp.alias}`, imp.qualified_name);
+        }
       }
     }
   }

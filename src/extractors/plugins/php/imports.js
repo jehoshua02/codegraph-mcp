@@ -1,5 +1,5 @@
 export default {
-  name: 'core:import',
+  name: 'plugin:php:import',
   types: [
     { type: 'IMPORTS', kind: 'edge', description: 'File imports a symbol via use statement' },
   ],

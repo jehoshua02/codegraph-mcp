@@ -62,10 +62,10 @@ describe('integration', () => {
     const stats = graphStats(db);
     const extractors = new Set(stats.typeRegistry.map(t => t.extractor));
     assert.ok(extractors.has('core:file'));
-    assert.ok(extractors.has('core:symbol'));
-    assert.ok(extractors.has('core:import'));
-    assert.ok(extractors.has('core:inheritance'));
-    assert.ok(extractors.has('core:call'));
+    assert.ok(extractors.has('plugin:php:symbol'));
+    assert.ok(extractors.has('plugin:php:import'));
+    assert.ok(extractors.has('plugin:php:inheritance'));
+    assert.ok(extractors.has('plugin:php:call'));
     db.close();
   });
 

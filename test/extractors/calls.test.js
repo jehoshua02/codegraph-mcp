@@ -1,8 +1,8 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { parse } from '../../src/parser.js';
-import importExtractor from '../../src/extractors/core/imports.js';
-import extractor from '../../src/extractors/core/calls.js';
+import importExtractor from '../../src/extractors/plugins/php/imports.js';
+import extractor from '../../src/extractors/plugins/php/calls.js';
 
 async function extract(php, filePath = '/test.php') {
   const tree = await parse(php, 'php');

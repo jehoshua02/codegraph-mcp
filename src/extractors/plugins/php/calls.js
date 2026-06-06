@@ -1,5 +1,5 @@
 export default {
-  name: 'core:call',
+  name: 'plugin:php:call',
   types: [
     { type: 'CALLS', kind: 'edge', description: 'Symbol calls another symbol' },
   ],

@@ -1,5 +1,5 @@
 export default {
-  name: 'core:inheritance',
+  name: 'plugin:php:inheritance',
   types: [
     { type: 'EXTENDS', kind: 'edge', description: 'Class extends another class' },
     { type: 'IMPLEMENTS', kind: 'edge', description: 'Class implements an interface' },

@@ -1,5 +1,5 @@
 export default {
-  name: 'core:symbol',
+  name: 'plugin:php:symbol',
   types: [
     { type: 'Class', kind: 'node', description: 'Class declaration' },
     { type: 'Method', kind: 'node', description: 'Method declaration' },
