@@ -2,35 +2,35 @@
 
 Pluggable code intelligence graph. Fast parallel indexing, extensible extractors, MCP interface.
 
+## Setup
+
+```bash
+git clone git@github.com:jehoshua02/codegraph-mcp.git
+cd codegraph-mcp
+npm install
+```
+
 ## Usage
 
 ### Index a codebase
 
 ```bash
-docker build -t codegraph-mcp .
-docker run --rm \
-  -v /path/to/codebase:/repo:ro \
-  -v $(pwd)/output:/tool/output \
-  codegraph-mcp src/cli.js index /repo /tool/output/graph.db
+node src/cli.js index /path/to/codebase .codegraph/graph.db
 ```
 
 ### Run as MCP server
 
-```bash
-docker run --rm -i \
-  -v $(pwd)/output:/tool/output \
-  -e CODEGRAPH_DB=/tool/output/graph.db \
-  codegraph-mcp src/index.js
-```
-
-Add to `.mcp.json`:
+Add to your `.mcp.json` or Claude Code MCP config:
 
 ```json
 {
   "mcpServers": {
     "codegraph-mcp": {
-      "command": "docker",
-      "args": ["run", "--rm", "-i", "-v", "./output:/tool/output", "-e", "CODEGRAPH_DB=/tool/output/graph.db", "codegraph-mcp", "src/index.js"]
+      "command": "node",
+      "args": ["/path/to/codegraph-mcp/src/index.js"],
+      "env": {
+        "CODEGRAPH_DB": "/path/to/codebase/.codegraph/graph.db"
+      }
     }
   }
 }
@@ -51,7 +51,7 @@ Add to `.mcp.json`:
 
 ## Extractors
 
-### Built-in (core)
+### Built-in
 
 | Extractor | Nodes | Edges |
 |-----------|-------|-------|
@@ -89,36 +89,13 @@ export default {
 };
 ```
 
-## Development
-
-### Build
+## Testing
 
 ```bash
-docker build -t codegraph-mcp .
+npm test
 ```
 
-### Test indexing
-
-```bash
-docker run --rm \
-  -v /path/to/codebase:/repo:ro \
-  -v $(pwd)/src:/tool/src \
-  -v $(pwd)/output:/tool/output \
-  codegraph-mcp src/cli.js index /repo /tool/output/graph.db
-```
-
-Mount `src` for live code changes without rebuilding.
-
-### Inspect the database
-
-```bash
-docker run --rm -it \
-  -v $(pwd)/output:/tool/output \
-  --entrypoint sqlite3 \
-  codegraph-mcp /tool/output/graph.db
-```
-
-### Query examples (sqlite3)
+## Query examples (sqlite3)
 
 ```sql
 -- Node counts by type
@@ -134,11 +111,14 @@ SELECT * FROM nodes WHERE type = 'Class' AND name = 'Borrower';
 SELECT n.* FROM edges e
 JOIN nodes n ON n.id = e.source_id
 JOIN nodes t ON t.id = e.target_id
-WHERE t.qualified_name = 'App\\Models\\Borrower::find'
+WHERE t.qualified_name = 'App\Models\Borrower::getDeal'
 AND e.type = 'CALLS';
 
--- Unreferenced methods
+-- Unreferenced methods (excluding structural edges)
 SELECT n.* FROM nodes n
 WHERE n.type = 'Method'
-AND n.id NOT IN (SELECT target_id FROM edges);
+AND n.id NOT IN (
+  SELECT target_id FROM edges
+  WHERE type NOT IN ('DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS')
+);
 ```

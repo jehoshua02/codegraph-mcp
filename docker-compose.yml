@@ -1,7 +1,0 @@
-services:
-  codegraph:
-    build: .
-    volumes:
-      - ./src:/tool/src
-      - ./output:/tool/output
-    working_dir: /tool

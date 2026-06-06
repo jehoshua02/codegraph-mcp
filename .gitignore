@@ -1,5 +1,5 @@
 node_modules/
 .codegraph/
 *.db
-output/
-build.log
+*.db-shm
+*.db-wal
