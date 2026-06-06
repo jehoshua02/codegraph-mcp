@@ -7,7 +7,7 @@ Pluggable code intelligence graph. Fast parallel indexing, extensible extractors
 ```bash
 git clone git@github.com:jehoshua02/codegraph-mcp.git
 cd codegraph-mcp
-npm install
+npm ci
 ```
 
 ## Usage
