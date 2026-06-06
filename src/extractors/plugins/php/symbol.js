@@ -1,3 +1,5 @@
+import { extractNamespace, qualify, extractVisibility, hasModifier, extractParams } from './utils.js';
+
 export default {
   name: 'plugin:php:symbol',
   types: [
@@ -13,88 +15,140 @@ export default {
     { type: 'HAS_PROPERTY', kind: 'edge', description: 'Class has property' },
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
-  extract(filePath, content, tree, context) {
-    const nodes = [];
-    const edges = [];
+  extract(filePath, content, tree) {
     const namespace = extractNamespace(tree.rootNode);
-
-    walkNode(tree.rootNode, namespace, filePath, nodes, edges, context);
-
-    return { nodes, edges };
+    return collectDeclarations(tree.rootNode, namespace, filePath);
   },
 };
 
-function extractNamespace(rootNode) {
-  for (const child of rootNode.children) {
-    if (child.type === 'namespace_definition') {
-      const nameNode = child.childForFieldName('name');
-      if (nameNode) return nameNode.text;
+function makeNode(type, name, qn, filePath, node, metadata) {
+  return { type, name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, ...(metadata ? { metadata } : {}) };
+}
+
+function extractClassLikeDeclaration(node, type, namespace, filePath) {
+  const name = node.childForFieldName('name')?.text;
+  if (!name) return null;
+  const qn = qualify(namespace, name);
+  const declNode = makeNode(type, name, qn, filePath, node);
+  const definesEdge = { source: filePath, target: qn, type: 'DEFINES' };
+  const members = type === 'Enum' ? { nodes: [], edges: [] } : extractMembers(node, qn, filePath);
+  return {
+    nodes: [declNode, ...members.nodes],
+    edges: [definesEdge, ...members.edges],
+  };
+}
+
+function extractFunctionDeclaration(node, namespace, filePath) {
+  const name = node.childForFieldName('name')?.text;
+  if (!name) return null;
+  const qn = qualify(namespace, name);
+  return {
+    nodes: [makeNode('Function', name, qn, filePath, node, { params: extractParams(node) })],
+    edges: [{ source: filePath, target: qn, type: 'DEFINES' }],
+  };
+}
+
+function extractConstDeclaration(node, namespace, filePath) {
+  const nodes = [];
+  const edges = [];
+  for (const element of node.children) {
+    if (element.type === 'const_element') {
+      const name = element.childForFieldName('name')?.text;
+      if (!name) continue;
+      const qn = qualify(namespace, name);
+      nodes.push(makeNode('Constant', name, qn, filePath, node));
+      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
     }
   }
-  return '';
+  return { nodes, edges };
 }
 
-function qualify(namespace, name) {
-  return namespace ? `${namespace}\\${name}` : name;
+function extractMethod(member, classQn, filePath) {
+  const name = member.childForFieldName('name')?.text;
+  if (!name) return null;
+  const qn = `${classQn}::${name}`;
+  return {
+    node: makeNode('Method', name, qn, filePath, member, { visibility: extractVisibility(member), params: extractParams(member), static: hasModifier(member, 'static') }),
+    edge: { source: classQn, target: qn, type: 'HAS_METHOD' },
+  };
 }
 
-function walkNode(node, namespace, filePath, nodes, edges, context) {
-  switch (node.type) {
-    case 'class_declaration': {
-      const name = node.childForFieldName('name')?.text;
-      if (!name) break;
-      const qn = qualify(namespace, name);
-      nodes.push({ type: 'Class', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1 });
-      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-      extractMembers(node, qn, filePath, nodes, edges);
-      break;
+function extractProperty(member, classQn, filePath) {
+  const nodes = [];
+  const edges = [];
+  for (const prop of member.children) {
+    if (prop.type === 'property_element') {
+      const varNode = prop.childForFieldName('name') ?? prop.children.find(c => c.type === 'variable_name');
+      const name = varNode?.text?.replace(/^\$/, '');
+      if (!name) continue;
+      const qn = `${classQn}::$${name}`;
+      nodes.push(makeNode('Property', name, qn, filePath, member, { visibility: extractVisibility(member), static: hasModifier(member, 'static') }));
+      edges.push({ source: classQn, target: qn, type: 'HAS_PROPERTY' });
     }
-    case 'interface_declaration': {
-      const name = node.childForFieldName('name')?.text;
-      if (!name) break;
-      const qn = qualify(namespace, name);
-      nodes.push({ type: 'Interface', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1 });
-      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-      extractMembers(node, qn, filePath, nodes, edges);
-      break;
+  }
+  return { nodes, edges };
+}
+
+function extractClassConstant(member, classQn, filePath) {
+  const nodes = [];
+  for (const element of member.children) {
+    if (element.type === 'const_element') {
+      const name = element.childForFieldName('name')?.text;
+      if (!name) continue;
+      const qn = `${classQn}::${name}`;
+      nodes.push(makeNode('Constant', name, qn, filePath, member, { visibility: extractVisibility(member) }));
     }
-    case 'trait_declaration': {
-      const name = node.childForFieldName('name')?.text;
-      if (!name) break;
-      const qn = qualify(namespace, name);
-      nodes.push({ type: 'Trait', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1 });
-      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-      extractMembers(node, qn, filePath, nodes, edges);
-      break;
+  }
+  return { nodes, edges: [] };
+}
+
+function extractMembers(classNode, classQn, filePath) {
+  const body = classNode.childForFieldName('body');
+  if (!body) return { nodes: [], edges: [] };
+
+  const nodes = [];
+  const edges = [];
+
+  for (const member of body.children) {
+    if (member.type === 'method_declaration') {
+      const result = extractMethod(member, classQn, filePath);
+      if (result) { nodes.push(result.node); edges.push(result.edge); }
+    } else if (member.type === 'property_declaration') {
+      const result = extractProperty(member, classQn, filePath);
+      nodes.push(...result.nodes);
+      edges.push(...result.edges);
+    } else if (member.type === 'const_declaration') {
+      const result = extractClassConstant(member, classQn, filePath);
+      nodes.push(...result.nodes);
     }
-    case 'enum_declaration': {
-      const name = node.childForFieldName('name')?.text;
-      if (!name) break;
-      const qn = qualify(namespace, name);
-      nodes.push({ type: 'Enum', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1 });
-      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-      break;
-    }
-    case 'function_definition': {
-      const name = node.childForFieldName('name')?.text;
-      if (!name) break;
-      const qn = qualify(namespace, name);
-      nodes.push({ type: 'Function', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, metadata: { params: extractParams(node) } });
-      edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-      break;
-    }
-    case 'const_declaration': {
-      for (const element of node.children) {
-        if (element.type === 'const_element') {
-          const name = element.childForFieldName('name')?.text;
-          if (!name) continue;
-          const qn = qualify(namespace, name);
-          nodes.push({ type: 'Constant', name, qualified_name: qn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1 });
-          edges.push({ source: filePath, target: qn, type: 'DEFINES' });
-        }
-      }
-      break;
-    }
+  }
+
+  return { nodes, edges };
+}
+
+const DECLARATION_TYPES = {
+  class_declaration: 'Class',
+  interface_declaration: 'Interface',
+  trait_declaration: 'Trait',
+  enum_declaration: 'Enum',
+};
+
+function extractDeclaration(node, namespace, filePath) {
+  const type = DECLARATION_TYPES[node.type];
+  if (type) return extractClassLikeDeclaration(node, type, namespace, filePath);
+  if (node.type === 'function_definition') return extractFunctionDeclaration(node, namespace, filePath);
+  if (node.type === 'const_declaration') return extractConstDeclaration(node, namespace, filePath);
+  return null;
+}
+
+function collectDeclarations(node, namespace, filePath) {
+  const nodes = [];
+  const edges = [];
+
+  const result = extractDeclaration(node, namespace, filePath);
+  if (result) {
+    nodes.push(...result.nodes);
+    edges.push(...result.edges);
   }
 
   for (const child of node.children) {
@@ -103,78 +157,24 @@ function walkNode(node, namespace, filePath, nodes, edges, context) {
       const ns = nsName ? nsName.text : namespace;
       const body = child.childForFieldName('body');
       if (body) {
-        for (const c of body.children) walkNode(c, ns, filePath, nodes, edges, context);
+        for (const c of body.children) {
+          const r = collectDeclarations(c, ns, filePath);
+          nodes.push(...r.nodes);
+          edges.push(...r.edges);
+        }
       } else {
         for (let i = child.children.indexOf(nsName ?? child.children[0]) + 1; i < child.children.length; i++) {
-          walkNode(child.children[i], ns, filePath, nodes, edges, context);
+          const r = collectDeclarations(child.children[i], ns, filePath);
+          nodes.push(...r.nodes);
+          edges.push(...r.edges);
         }
       }
     } else {
-      walkNode(child, namespace, filePath, nodes, edges, context);
+      const r = collectDeclarations(child, namespace, filePath);
+      nodes.push(...r.nodes);
+      edges.push(...r.edges);
     }
   }
-}
 
-function extractMembers(classNode, classQn, filePath, nodes, edges) {
-  const body = classNode.childForFieldName('body');
-  if (!body) return;
-
-  for (const member of body.children) {
-    if (member.type === 'method_declaration') {
-      const name = member.childForFieldName('name')?.text;
-      if (!name) continue;
-      const qn = `${classQn}::${name}`;
-      const visibility = extractVisibility(member);
-      nodes.push({ type: 'Method', name, qualified_name: qn, file_path: filePath, start_line: member.startPosition.row + 1, end_line: member.endPosition.row + 1, metadata: { visibility, params: extractParams(member), static: hasModifier(member, 'static') } });
-      edges.push({ source: classQn, target: qn, type: 'HAS_METHOD' });
-    } else if (member.type === 'property_declaration') {
-      for (const prop of member.children) {
-        if (prop.type === 'property_element') {
-          const varNode = prop.childForFieldName('name') ?? prop.children.find(c => c.type === 'variable_name');
-          const name = varNode?.text?.replace(/^\$/, '');
-          if (!name) continue;
-          const qn = `${classQn}::$${name}`;
-          nodes.push({ type: 'Property', name, qualified_name: qn, file_path: filePath, start_line: member.startPosition.row + 1, end_line: member.endPosition.row + 1, metadata: { visibility: extractVisibility(member), static: hasModifier(member, 'static') } });
-          edges.push({ source: classQn, target: qn, type: 'HAS_PROPERTY' });
-        }
-      }
-    } else if (member.type === 'const_declaration') {
-      for (const element of member.children) {
-        if (element.type === 'const_element') {
-          const name = element.childForFieldName('name')?.text;
-          if (!name) continue;
-          const qn = `${classQn}::${name}`;
-          nodes.push({ type: 'Constant', name, qualified_name: qn, file_path: filePath, start_line: member.startPosition.row + 1, end_line: member.endPosition.row + 1, metadata: { visibility: extractVisibility(member) } });
-        }
-      }
-    }
-  }
-}
-
-function extractVisibility(node) {
-  for (const child of node.children) {
-    if (child.type === 'visibility_modifier') return child.text;
-  }
-  return 'public';
-}
-
-function hasModifier(node, modifier) {
-  for (const child of node.children) {
-    if (child.type === 'static_modifier' && modifier === 'static') return true;
-    if (child.type === 'abstract_modifier' && modifier === 'abstract') return true;
-    if (child.type === 'final_modifier' && modifier === 'final') return true;
-  }
-  return false;
-}
-
-function extractParams(node) {
-  const params = node.childForFieldName('parameters');
-  if (!params) return [];
-  return params.children
-    .filter(c => c.type === 'simple_parameter' || c.type === 'property_promotion_parameter')
-    .map(p => {
-      const name = p.childForFieldName('name')?.text?.replace(/^\$/, '');
-      const type = p.childForFieldName('type')?.text;
-      return { name, type: type ?? null };
-    });
+  return { nodes, edges };
 }

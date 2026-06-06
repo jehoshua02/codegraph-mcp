@@ -8,6 +8,64 @@ import phpExtractors from './extractors/plugins/php/index.js';
 
 const BUILT_IN_EXTRACTORS = [fileExtractor, ...phpExtractors];
 
+async function parseFiles(files) {
+  const parsed = [];
+  for (const { filePath, content } of files) {
+    const language = languageForFile(filePath);
+    if (!language) continue;
+    const tree = await parse(content, language);
+    parsed.push({ filePath, content, tree, language });
+  }
+  return parsed;
+}
+
+function buildImportMap(parsed, extractors, context) {
+  for (const { filePath, content, tree } of parsed) {
+    for (const ext of extractors) {
+      if (!ext.fileFilter(filePath)) continue;
+      const result = ext.extract(filePath, content, tree, context);
+      if (result.imports) {
+        for (const imp of result.imports) {
+          context.importMap.set(`${filePath}::${imp.alias}`, imp.qualified_name);
+        }
+      }
+    }
+  }
+}
+
+function extractGraph(parsed, extractors, context) {
+  const nodes = [];
+  const edges = [];
+  for (const { filePath, content, tree } of parsed) {
+    for (const ext of extractors) {
+      if (!ext.fileFilter(filePath)) continue;
+      const result = ext.extract(filePath, content, tree, context);
+      if (result.nodes) nodes.push(...result.nodes);
+      if (result.edges) edges.push(...result.edges);
+    }
+  }
+  return { nodes, edges };
+}
+
+function persistGraph(db, nodes, edges) {
+  const insertAll = db.transaction(() => {
+    insertNodes(db, nodes);
+    const nodeIdMap = buildNodeIdMap(db);
+    for (const row of db.prepare('SELECT id, qualified_name FROM nodes').iterate()) {
+      nodeIdMap.set(row.qualified_name, row.id);
+    }
+    insertEdges(db, edges, nodeIdMap);
+  });
+  insertAll();
+}
+
+function getGraphCounts(db) {
+  return {
+    nodeCount: db.prepare('SELECT COUNT(*) as count FROM nodes').get().count,
+    edgeCount: db.prepare('SELECT COUNT(*) as count FROM edges').get().count,
+  };
+}
+
 export async function index(rootDir, dbPath, { project, pluginExtractors = [] } = {}) {
   const start = performance.now();
   const projectName = project || basename(rootDir);
@@ -23,60 +81,18 @@ export async function index(rootDir, dbPath, { project, pluginExtractors = [] } 
 
   const filePaths = await discoverFiles(rootDir);
   const files = await readFiles(filePaths);
+  const parsed = await parseFiles(files);
 
-  const allNodes = [
-    { type: 'Project', name: projectName, qualified_name: `project::${projectName}`, file_path: rootDir, start_line: null, end_line: null },
-  ];
-  const allEdges = [];
   const context = { importMap: new Map(), project: projectName };
+  buildImportMap(parsed, extractors, context);
 
-  // Parse all files and collect trees
-  const parsed = [];
-  for (const { filePath, content } of files) {
-    const language = languageForFile(filePath);
-    if (!language) continue;
-    const tree = await parse(content, language);
-    parsed.push({ filePath, content, tree, language });
-  }
+  const { nodes, edges } = extractGraph(parsed, extractors, context);
+  nodes.unshift({ type: 'Project', name: projectName, qualified_name: `project::${projectName}`, file_path: rootDir, start_line: null, end_line: null });
 
-  // Pass 1: extract imports to build resolution map
-  for (const { filePath, content, tree } of parsed) {
-    for (const ext of extractors) {
-      if (!ext.fileFilter(filePath)) continue;
-      const result = ext.extract(filePath, content, tree, context);
-      if (result.imports) {
-        for (const imp of result.imports) {
-          context.importMap.set(`${filePath}::${imp.alias}`, imp.qualified_name);
-        }
-      }
-    }
-  }
-
-  // Pass 2: run all extractors (single pass per file, tree already parsed)
-  for (const { filePath, content, tree } of parsed) {
-    for (const ext of extractors) {
-      if (!ext.fileFilter(filePath)) continue;
-      const result = ext.extract(filePath, content, tree, context);
-      if (result.nodes) allNodes.push(...result.nodes);
-      if (result.edges) allEdges.push(...result.edges);
-    }
-  }
-
-  // Write to DB in a single transaction
-  const insertAll = db.transaction(() => {
-    insertNodes(db, allNodes);
-    const nodeIdMap = buildNodeIdMap(db);
-    for (const row of db.prepare('SELECT id, qualified_name FROM nodes').iterate()) {
-      nodeIdMap.set(row.qualified_name, row.id);
-    }
-    insertEdges(db, allEdges, nodeIdMap);
-  });
-  insertAll();
-
-  const elapsed = ((performance.now() - start) / 1000).toFixed(2);
-  const nodeCount = db.prepare('SELECT COUNT(*) as count FROM nodes').get().count;
-  const edgeCount = db.prepare('SELECT COUNT(*) as count FROM edges').get().count;
+  persistGraph(db, nodes, edges);
+  const counts = getGraphCounts(db);
   db.close();
 
-  return { project: projectName, elapsed, nodeCount, edgeCount, fileCount: files.length };
+  const elapsed = ((performance.now() - start) / 1000).toFixed(2);
+  return { project: projectName, elapsed, ...counts, fileCount: files.length };
 }

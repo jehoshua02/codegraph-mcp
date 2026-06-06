@@ -1,3 +1,5 @@
+import { extractNamespace, qualify, resolveClassName } from './utils.js';
+
 export default {
   name: 'plugin:php:inheritance',
   types: [
@@ -7,83 +9,74 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
-    const edges = [];
     const namespace = extractNamespace(tree.rootNode);
-    walkForInheritance(tree.rootNode, namespace, filePath, edges, context);
-    return { nodes: [], edges };
+    return { nodes: [], edges: collectInheritanceEdges(tree.rootNode, namespace, filePath, context) };
   },
 };
 
-function extractNamespace(rootNode) {
-  for (const child of rootNode.children) {
-    if (child.type === 'namespace_definition') {
-      const nameNode = child.childForFieldName('name');
-      if (nameNode) return nameNode.text;
+function extractExtendsEdges(node, qn, namespace, context, filePath) {
+  const baseClause = node.childForFieldName('base_clause') ?? node.children.find(c => c.type === 'base_clause');
+  if (!baseClause) return [];
+  return baseClause.children
+    .filter(c => c.type === 'name' || c.type === 'qualified_name')
+    .map(c => ({ source: qn, target: resolveClassName(c.text, namespace, context, filePath), type: 'EXTENDS' }));
+}
+
+function extractImplementsEdges(node, qn, namespace, context, filePath) {
+  const edges = [];
+  for (const child of node.children) {
+    if (child.type === 'class_interface_clause') {
+      for (const iface of child.children) {
+        if (iface.type === 'name' || iface.type === 'qualified_name') {
+          edges.push({ source: qn, target: resolveClassName(iface.text, namespace, context, filePath), type: 'IMPLEMENTS' });
+        }
+      }
     }
   }
-  return '';
+  return edges;
 }
 
-function qualify(namespace, name) {
-  return namespace ? `${namespace}\\${name}` : name;
-}
-
-function resolveClassName(name, namespace, context, filePath) {
-  if (name.includes('\\')) return name.replace(/^\\/, '');
-
-  if (context?.importMap) {
-    const resolved = context.importMap.get(`${filePath}::${name}`);
-    if (resolved) return resolved;
+function extractTraitUseEdges(node, qn, namespace, context, filePath) {
+  const body = node.childForFieldName('body');
+  if (!body) return [];
+  const edges = [];
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (member.type === 'use_declaration') {
+      for (const traitChild of member.children) {
+        if (traitChild.type === 'name' || traitChild.type === 'qualified_name') {
+          edges.push({ source: qn, target: resolveClassName(traitChild.text, namespace, context, filePath), type: 'USES_TRAIT' });
+        }
+      }
+    }
   }
-
-  return qualify(namespace, name);
+  return edges;
 }
 
-function walkForInheritance(node, namespace, filePath, edges, context) {
+function extractDeclarationEdges(node, namespace, filePath, context) {
+  if (node.type !== 'class_declaration' && node.type !== 'interface_declaration' && node.type !== 'enum_declaration') return [];
+  const name = node.childForFieldName('name')?.text;
+  if (!name) return [];
+  const qn = qualify(namespace, name);
+
+  return [
+    ...extractExtendsEdges(node, qn, namespace, context, filePath),
+    ...extractImplementsEdges(node, qn, namespace, context, filePath),
+    ...extractTraitUseEdges(node, qn, namespace, context, filePath),
+  ];
+}
+
+function collectInheritanceEdges(node, namespace, filePath, context) {
   if (node.type === 'namespace_definition') {
     const nameNode = node.childForFieldName('name');
     namespace = nameNode ? nameNode.text : namespace;
   }
 
-  if (node.type === 'class_declaration' || node.type === 'interface_declaration' || node.type === 'enum_declaration') {
-    const name = node.childForFieldName('name')?.text;
-    if (!name) return;
-    const qn = qualify(namespace, name);
-
-    const baseClause = node.childForFieldName('base_clause') ?? node.children.find(c => c.type === 'base_clause');
-    if (baseClause) {
-      for (const child of baseClause.children) {
-        if (child.type === 'name' || child.type === 'qualified_name') {
-          edges.push({ source: qn, target: resolveClassName(child.text, namespace, context, filePath), type: 'EXTENDS' });
-        }
-      }
-    }
-
-    for (const child of node.children) {
-      if (child.type === 'class_interface_clause') {
-        for (const iface of child.children) {
-          if (iface.type === 'name' || iface.type === 'qualified_name') {
-            edges.push({ source: qn, target: resolveClassName(iface.text, namespace, context, filePath), type: 'IMPLEMENTS' });
-          }
-        }
-      }
-    }
-
-    const body = node.childForFieldName('body');
-    if (body) {
-      for (const member of body.children) {
-        if (member.type === 'use_declaration') {
-          for (const traitChild of member.children) {
-            if (traitChild.type === 'name' || traitChild.type === 'qualified_name') {
-              edges.push({ source: qn, target: resolveClassName(traitChild.text, namespace, context, filePath), type: 'USES_TRAIT' });
-            }
-          }
-        }
-      }
-    }
-  }
+  const edges = extractDeclarationEdges(node, namespace, filePath, context);
 
   for (const child of node.children) {
-    walkForInheritance(child, namespace, filePath, edges, context);
+    edges.push(...collectInheritanceEdges(child, namespace, filePath, context));
   }
+
+  return edges;
 }
