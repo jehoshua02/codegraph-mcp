@@ -4,26 +4,31 @@ export function openReadOnly(dbPath) {
   return new Database(dbPath, { readonly: true });
 }
 
-export function symbolSearch(db, { name, type, file_pattern, limit = 50 }) {
-  let sql = 'SELECT * FROM nodes WHERE 1=1';
+export function symbolSearch(db, { name, type, file_pattern, count_only = false, limit = 50 }) {
+  let where = ' WHERE 1=1';
   const params = [];
 
   if (name) {
-    sql += ' AND (name LIKE ? OR qualified_name LIKE ?)';
+    where += ' AND (name LIKE ? OR qualified_name LIKE ?)';
     params.push(`%${name}%`, `%${name}%`);
   }
   if (type) {
-    sql += ' AND type = ?';
+    where += ' AND type = ?';
     params.push(type);
   }
   if (file_pattern) {
-    sql += ' AND file_path LIKE ?';
+    where += ' AND file_path LIKE ?';
     params.push(`%${file_pattern}%`);
   }
-  sql += ' LIMIT ?';
-  params.push(limit);
 
-  return db.prepare(sql).all(...params).map(parseMetadata);
+  const total = db.prepare('SELECT COUNT(*) as count FROM nodes' + where).get(...params).count;
+
+  if (count_only) {
+    return { total, results: [] };
+  }
+
+  const results = db.prepare('SELECT * FROM nodes' + where + ' LIMIT ?').all(...params, limit).map(parseMetadata);
+  return { total, results };
 }
 
 export function symbolInbound(db, { qualified_name, edge_type, limit = 50 }) {

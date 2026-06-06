@@ -71,8 +71,8 @@ describe('integration', () => {
 
   it('finds classes by search', () => {
     const db = openReadOnly(DB_PATH);
-    const results = symbolSearch(db, { name: 'User', type: 'Class' });
-    assert.ok(results.length >= 1);
+    const { total, results } = symbolSearch(db, { name: 'User', type: 'Class' });
+    assert.ok(total >= 1);
     assert.ok(results.some(r => r.qualified_name === 'App\\Models\\User'));
     db.close();
   });

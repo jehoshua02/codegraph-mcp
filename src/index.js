@@ -29,7 +29,7 @@ server.tool('index_rebuild', { directory: z.string(), db_path: z.string().option
   return { content: [{ type: 'text', text: JSON.stringify(result) }] };
 });
 
-server.tool('symbol_search', { name: z.string().optional(), type: z.string().optional(), file_pattern: z.string().optional(), limit: z.number().optional() }, async (params) => {
+server.tool('symbol_search', { name: z.string().optional(), type: z.string().optional(), file_pattern: z.string().optional(), count_only: z.boolean().optional(), limit: z.number().optional() }, async (params) => {
   const results = withDb(db => symbolSearch(db, params));
   return { content: [{ type: 'text', text: JSON.stringify(results) }] };
 });
