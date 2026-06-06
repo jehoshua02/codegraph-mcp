@@ -56,36 +56,34 @@ function findProjectNodeIds(db, project) {
 }
 
 function findProjectSubgraphIds(db, projectNodeId) {
-  const fileIds = db.prepare("SELECT target_id as id FROM edges WHERE source_id = ? AND type = 'CONTAINS_FILE'").all(projectNodeId).map(r => r.id);
-  if (fileIds.length === 0) return [projectNodeId];
+  db.exec('CREATE TEMP TABLE IF NOT EXISTS _remove_ids (id INTEGER PRIMARY KEY)');
+  db.exec('DELETE FROM _remove_ids');
 
-  const placeholders = (ids) => ids.map(() => '?').join(',');
+  const insert = db.prepare('INSERT OR IGNORE INTO _remove_ids (id) VALUES (?)');
 
-  const definedIds = db.prepare(
-    `SELECT target_id as id FROM edges WHERE source_id IN (${placeholders(fileIds)}) AND type = 'DEFINES'`
-  ).all(...fileIds).map(r => r.id);
+  insert.run(projectNodeId);
 
-  const childIds = definedIds.length > 0
-    ? db.prepare(
-        `SELECT target_id as id FROM edges WHERE source_id IN (${placeholders(definedIds)}) AND type IN ('HAS_METHOD', 'HAS_PROPERTY')`
-      ).all(...definedIds).map(r => r.id)
-    : [];
+  const fileIds = db.prepare("SELECT target_id as id FROM edges WHERE source_id = ? AND type = 'CONTAINS_FILE'").all(projectNodeId);
+  for (const r of fileIds) insert.run(r.id);
 
-  return [projectNodeId, ...fileIds, ...definedIds, ...childIds];
+  const definedIds = db.prepare("SELECT target_id as id FROM edges e JOIN _remove_ids r ON e.source_id = r.id WHERE e.type = 'DEFINES'").all();
+  for (const r of definedIds) insert.run(r.id);
+
+  const childIds = db.prepare("SELECT target_id as id FROM edges e JOIN _remove_ids r ON e.source_id = r.id WHERE e.type IN ('HAS_METHOD', 'HAS_PROPERTY')").all();
+  for (const r of childIds) insert.run(r.id);
 }
 
-function deleteNodesByIds(db, ids) {
-  if (ids.length === 0) return;
-  const placeholders = ids.map(() => '?').join(',');
-  db.prepare(`DELETE FROM edges WHERE source_id IN (${placeholders}) OR target_id IN (${placeholders})`).run(...ids, ...ids);
-  db.prepare(`DELETE FROM nodes WHERE id IN (${placeholders})`).run(...ids);
+function deleteNodesByIds(db) {
+  db.exec('DELETE FROM edges WHERE source_id IN (SELECT id FROM _remove_ids) OR target_id IN (SELECT id FROM _remove_ids)');
+  db.exec('DELETE FROM nodes WHERE id IN (SELECT id FROM _remove_ids)');
+  db.exec('DROP TABLE IF EXISTS _remove_ids');
 }
 
 export function clearProject(db, project) {
   const projectNodeIds = findProjectNodeIds(db, project);
   for (const pid of projectNodeIds) {
-    const ids = findProjectSubgraphIds(db, pid);
-    deleteNodesByIds(db, ids);
+    findProjectSubgraphIds(db, pid);
+    deleteNodesByIds(db);
   }
 }
 
