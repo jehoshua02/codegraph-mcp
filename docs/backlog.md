@@ -3,9 +3,19 @@
 
 ## Must Have
 
-1. **Laravel extractor plugin** — routes→controllers, Eloquent relationships, events→listeners, observers, DI bindings, job dispatch, middleware, scheduled tasks
-2. **Multi-repo indexing** — index multiple repos into same DB, preserve on reindex (done: Project nodes + CONTAINS_FILE, clearProject scoped)
-3. **README update** — reflect current install process (MCP config in `~/.claude.json`), remove stale Docker references
+1. ~~**Laravel extractor plugin**~~ — in progress
+   - [x] Job dispatch (`FooJob::dispatch`, `dispatch(new FooJob)`, `Bus::dispatch`)
+   - [ ] Routes → controllers
+   - [ ] Eloquent relationships
+   - [ ] Events → listeners (EventServiceProvider `$listen`)
+   - [ ] Observers
+   - [ ] DI bindings (bind/singleton)
+   - [ ] Middleware
+   - [ ] Scheduled tasks
+   - [ ] Accessors/mutators/scopes
+2. ~~**Multi-repo indexing**~~ — done (Project nodes + CONTAINS_FILE, clearProject scoped)
+3. **Extractor configuration per project** — `.codegraph/config.json` specifies which extractors to enable (e.g. `["php", "laravel"]` vs `["typescript", "nestjs"]`). Currently all extractors run on every project.
+4. **README update** — reflect current install process (MCP config in `~/.claude.json`), remove stale Docker references
 
 ## Should Have
 
