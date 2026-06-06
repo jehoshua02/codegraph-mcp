@@ -66,6 +66,27 @@ function getGraphCounts(db) {
   };
 }
 
+function inferMissingNodes(nodes, edges) {
+  const known = new Set(nodes.map(n => n.qualified_name).filter(Boolean));
+  const inferred = [];
+  const seen = new Set();
+
+  for (const edge of edges) {
+    for (const qn of [edge.source, edge.target]) {
+      if (!qn || known.has(qn) || seen.has(qn)) continue;
+      if (qn.includes('::')) {
+        const [classQn, methodName] = qn.split('::');
+        const name = methodName.startsWith('$') ? methodName.replace(/^\$/, '') : methodName;
+        const type = methodName.startsWith('$') ? 'Property' : 'Method';
+        inferred.push({ type, name, qualified_name: qn, file_path: '', start_line: null, end_line: null, metadata: { inferred: true } });
+        seen.add(qn);
+      }
+    }
+  }
+
+  return inferred;
+}
+
 export async function index(rootDir, dbPath, { project, pluginExtractors = [] } = {}) {
   const start = performance.now();
   const projectName = project || basename(rootDir);
@@ -88,6 +109,9 @@ export async function index(rootDir, dbPath, { project, pluginExtractors = [] } 
 
   const { nodes, edges } = extractGraph(parsed, extractors, context);
   nodes.unshift({ type: 'Project', name: projectName, qualified_name: `project::${projectName}`, file_path: rootDir, start_line: null, end_line: null });
+
+  const inferred = inferMissingNodes(nodes, edges);
+  nodes.push(...inferred);
 
   persistGraph(db, nodes, edges);
   const counts = getGraphCounts(db);

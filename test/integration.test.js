@@ -158,6 +158,15 @@ describe('integration', () => {
     db.close();
   });
 
+  it('creates inferred nodes for called but undefined methods', () => {
+    const db = openReadOnly(DB_PATH);
+    const inferred = db.prepare("SELECT * FROM nodes WHERE metadata LIKE '%inferred%'").all();
+    assert.ok(inferred.length > 0);
+    assert.ok(inferred.every(n => JSON.parse(n.metadata).inferred === true));
+    assert.ok(inferred.some(n => n.type === 'Method'));
+    db.close();
+  });
+
   it('completes indexing in under 5 seconds', () => {
     assert.ok(parseFloat(result.elapsed) < 5, `Indexing took ${result.elapsed}s`);
   });
