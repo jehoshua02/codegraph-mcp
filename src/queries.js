@@ -172,6 +172,17 @@ export function graphStats(db) {
   return { totals, nodeStats, edgeStats, typeRegistry };
 }
 
+export function graphQuery(db, { sql, limit = 100 }) {
+  const normalized = sql.trim().toUpperCase();
+  if (!normalized.startsWith('SELECT')) {
+    throw new Error('Only SELECT queries are allowed');
+  }
+
+  const hasLimit = /\bLIMIT\b/i.test(sql);
+  const query = hasLimit ? sql : `${sql} LIMIT ${limit}`;
+  return db.prepare(query).all();
+}
+
 function parseMetadata(row) {
   if (row.metadata && typeof row.metadata === 'string') {
     try { row.metadata = JSON.parse(row.metadata); } catch { /* keep as string */ }

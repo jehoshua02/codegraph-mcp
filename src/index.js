@@ -5,7 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { resolve } from 'path';
 import { index } from './indexer.js';
-import { openReadOnly, symbolSearch, symbolInbound, symbolOutbound, symbolTrace, symbolUnreferenced, edgeSearch, graphStats } from './queries.js';
+import { openReadOnly, symbolSearch, symbolInbound, symbolOutbound, symbolTrace, symbolUnreferenced, edgeSearch, graphStats, graphQuery } from './queries.js';
 
 const server = new McpServer({
   name: 'codegraph-mcp',
@@ -61,6 +61,11 @@ server.tool('edge_search', { type: z.string().optional(), source: z.string().opt
 
 server.tool('graph_stats', {}, async () => {
   const results = withDb(db => graphStats(db));
+  return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+});
+
+server.tool('graph_query', { sql: z.string(), limit: z.number().optional() }, async (params) => {
+  const results = withDb(db => graphQuery(db, params));
   return { content: [{ type: 'text', text: JSON.stringify(results) }] };
 });
 
