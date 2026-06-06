@@ -84,6 +84,27 @@ describe('laravel route extractor', () => {
     assert.equal(nodes.length, 3);
   });
 
+  it('detects Route::controller()->group() with string method names', async () => {
+    const { nodes, edges } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      Route::controller(UserController::class)->group(function () {
+        Route::get('/users', 'index');
+        Route::post('/users', 'store');
+      });
+    `);
+    assert.equal(nodes.length, 2);
+    assert.ok(edges.some(e => e.target === 'App\\Http\\Controllers\\UserController::index'));
+    assert.ok(edges.some(e => e.target === 'App\\Http\\Controllers\\UserController::store'));
+  });
+
+  it('detects string Controller@method syntax', async () => {
+    const { edges } = await extract(`<?php
+      Route::get('/users', 'UserController@index');
+    `);
+    assert.equal(edges.length, 1);
+    assert.ok(edges[0].target.includes('UserController::index'));
+  });
+
   it('ignores non-Route static calls', async () => {
     const { nodes } = await extract(`<?php
       Cache::get('key');
