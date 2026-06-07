@@ -76,11 +76,19 @@ function findProjectSubgraphIds(db, projectNodeId) {
 function deleteNodesByIds(db) {
   db.exec('DELETE FROM edges WHERE source_id IN (SELECT id FROM _remove_ids) OR target_id IN (SELECT id FROM _remove_ids)');
   db.exec('DELETE FROM nodes WHERE id IN (SELECT id FROM _remove_ids)');
+  db.exec('DELETE FROM nodes WHERE id NOT IN (SELECT source_id FROM edges UNION SELECT target_id FROM edges) AND type != \'Project\'');
   db.exec('DROP TABLE IF EXISTS _remove_ids');
 }
 
 export function clearProject(db, project) {
   const projectNodeIds = findProjectNodeIds(db, project);
+  const otherProjects = db.prepare("SELECT COUNT(*) as c FROM nodes WHERE type = 'Project' AND name != ?").get(project).c;
+
+  if (otherProjects === 0) {
+    clearGraph(db);
+    return;
+  }
+
   for (const pid of projectNodeIds) {
     findProjectSubgraphIds(db, pid);
     deleteNodesByIds(db);

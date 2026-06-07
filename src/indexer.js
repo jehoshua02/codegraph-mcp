@@ -21,8 +21,9 @@ async function parseFiles(files) {
 }
 
 function buildImportMap(parsed, extractors, context) {
+  const importExtractors = extractors.filter(ext => ext.name.includes('import'));
   for (const { filePath, content, tree } of parsed) {
-    for (const ext of extractors) {
+    for (const ext of importExtractors) {
       if (!ext.fileFilter(filePath)) continue;
       const result = ext.extract(filePath, content, tree, context);
       if (result.imports) {
@@ -65,6 +66,16 @@ function getGraphCounts(db) {
     nodeCount: db.prepare('SELECT COUNT(*) as count FROM nodes').get().count,
     edgeCount: db.prepare('SELECT COUNT(*) as count FROM edges').get().count,
   };
+}
+
+function deduplicateNodes(nodes) {
+  const seen = new Map();
+  return nodes.filter(n => {
+    if (!n.qualified_name) return true;
+    if (seen.has(n.qualified_name)) return false;
+    seen.set(n.qualified_name, true);
+    return true;
+  });
 }
 
 function inferMissingNodes(nodes, edges) {
@@ -114,7 +125,8 @@ export async function index(rootDir, dbPath, { project, pluginExtractors = [] } 
   const inferred = inferMissingNodes(nodes, edges);
   nodes.push(...inferred);
 
-  persistGraph(db, nodes, edges);
+  const dedupedNodes = deduplicateNodes(nodes);
+  persistGraph(db, dedupedNodes, edges);
   const counts = getGraphCounts(db);
   db.close();
 
