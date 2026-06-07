@@ -14,12 +14,13 @@ export default {
     const namespace = extractNamespace(tree.rootNode);
     const nodes = [];
     const edges = [];
-    collectRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, null);
+    collectRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, { controller: null, prefix: '' });
     return { nodes, edges };
   },
 };
 
 function extractStringValue(node) {
+  if (!node) return null;
   if (node.type === 'string') return node.text.replace(/^['"]|['"]$/g, '');
   if (node.type === 'encapsed_string') return node.text.replace(/^"|"$/g, '');
   if (node.type === 'argument') {
@@ -90,28 +91,42 @@ function resolveHandler(args, namespace, context, filePath, groupController) {
   }
 
   const stringArg = extractStringValue(handlerArgs[0]);
-  if (stringArg && groupController) {
-    if (stringArg.includes('@')) {
-      const [cls, method] = stringArg.split('@');
-      return { controllerClass: resolveClassName(cls, namespace, context, filePath), method };
-    }
-    return { controllerClass: groupController, method: stringArg };
-  }
-
   if (stringArg && stringArg.includes('@')) {
     const [cls, method] = stringArg.split('@');
     return { controllerClass: resolveClassName(cls, namespace, context, filePath), method };
+  }
+  if (stringArg && groupController) {
+    return { controllerClass: groupController, method: stringArg };
   }
 
   return { controllerClass: null, method: null };
 }
 
-function makeRoute(httpMethod, path, controllerClass, method, filePath, node) {
+function hasClosure(args) {
+  for (const arg of args) {
+    if (arg.type === 'anonymous_function' || arg.type === 'anonymous_function_creation_expression') return true;
+    if (arg.type === 'argument') {
+      for (let i = 0; i < arg.childCount; i++) {
+        const t = arg.child(i).type;
+        if (t === 'anonymous_function' || t === 'anonymous_function_creation_expression') return true;
+      }
+    }
+  }
+  return false;
+}
+
+function joinPath(prefix, path) {
+  if (!prefix) return path;
+  const p = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix;
+  const s = path.startsWith('/') ? path : '/' + path;
+  return p + s;
+}
+
+function makeRoute(httpMethod, path, filePath, node, target) {
   const routeQn = `route::${httpMethod}::${path}`;
-  return {
-    node: { type: 'Route', name: path, qualified_name: routeQn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, metadata: { http_method: httpMethod.toUpperCase(), path } },
-    edge: { source: routeQn, target: `${controllerClass}::${method ?? '__invoke'}`, type: 'ROUTE_HANDLES' },
-  };
+  const routeNode = { type: 'Route', name: path, qualified_name: routeQn, file_path: filePath, start_line: node.startPosition.row + 1, end_line: node.endPosition.row + 1, metadata: { http_method: httpMethod.toUpperCase(), path } };
+  const edge = target ? { source: routeQn, target, type: 'ROUTE_HANDLES' } : null;
+  return { node: routeNode, edge };
 }
 
 function extractResourceRoutes(methodName, path, controllerClass, filePath, node) {
@@ -152,64 +167,71 @@ function isRouteChain(node) {
   return false;
 }
 
-function extractGroupController(node, namespace, context, filePath) {
-  if (node.type !== 'scoped_call_expression' && node.type !== 'member_call_expression') return null;
-  const method = node.childForFieldName('name')?.text;
-  if (method === 'controller') {
-    const args = getArgs(node);
-    const classConst = findInArgs(args, 'class_constant_access_expression');
-    if (classConst) return extractClassFromNode(classConst, namespace, context, filePath);
-  }
-  const object = node.childForFieldName('object');
-  if (object) return extractGroupController(object, namespace, context, filePath);
-  return null;
+function extractGroupContext(node, namespace, context, filePath, currentGroup) {
+  let controller = currentGroup.controller;
+  let prefix = currentGroup.prefix;
+
+  extractChainContext(node, namespace, context, filePath, (method, args) => {
+    if (method === 'controller') {
+      const classConst = findInArgs(args, 'class_constant_access_expression');
+      if (classConst) controller = extractClassFromNode(classConst, namespace, context, filePath);
+    } else if (method === 'prefix') {
+      const p = extractStringValue(args[0]);
+      if (p) prefix = joinPath(prefix, p);
+    } else if (method === 'group' && args.length > 0) {
+      const arrayNode = findInArgs(args, 'array_creation_expression');
+      if (arrayNode) {
+        const extracted = extractArrayConfig(arrayNode);
+        if (extracted.prefix) prefix = joinPath(prefix, extracted.prefix);
+        if (extracted.controller) {
+          controller = resolveClassName(extracted.controller, namespace, context, filePath);
+        }
+      }
+    }
+  });
+
+  return { controller, prefix };
 }
 
-function collectRoutes(node, namespace, filePath, context, nodes, edges, groupController) {
-  if (node.type === 'namespace_definition') {
-    const nameNode = node.childForFieldName('name');
-    namespace = nameNode ? nameNode.text : namespace;
-  }
-
-  if (isRouteCall(node)) {
+function extractChainContext(node, namespace, context, filePath, callback) {
+  if (node.type === 'scoped_call_expression') {
     const method = node.childForFieldName('name')?.text;
-    const args = getArgs(node);
+    if (method) callback(method, getArgs(node));
+  } else if (node.type === 'member_call_expression') {
+    const object = node.childForFieldName('object');
+    if (object) extractChainContext(object, namespace, context, filePath, callback);
+    const method = node.childForFieldName('name')?.text;
+    if (method) callback(method, getArgs(node));
+  }
+}
 
-    if (HTTP_METHODS.has(method)) {
-      const path = extractStringValue(args[0]);
-      if (path) {
-        const { controllerClass, method: handlerMethod } = resolveHandler(args, namespace, context, filePath, groupController);
-        if (controllerClass) {
-          const route = makeRoute(method, path, controllerClass, handlerMethod, filePath, node);
-          nodes.push(route.node);
-          edges.push(route.edge);
-        }
+function extractArrayConfig(arrayNode) {
+  const result = { prefix: null, controller: null };
+  for (let i = 0; i < arrayNode.childCount; i++) {
+    const child = arrayNode.child(i);
+    if (child.type === 'array_element_initializer') {
+      const strings = [];
+      let classConst = null;
+      for (let j = 0; j < child.childCount; j++) {
+        const el = child.child(j);
+        if (el.type === 'string') strings.push(el.text.replace(/^['"]|['"]$/g, ''));
+        if (el.type === 'class_constant_access_expression') classConst = el;
       }
-    } else if (RESOURCE_METHODS.has(method)) {
-      const path = extractStringValue(args[0]);
-      const classConst = findInArgs(args.slice(1), 'class_constant_access_expression');
-      if (path && classConst) {
-        const controllerClass = extractClassFromNode(classConst, namespace, context, filePath);
-        if (controllerClass) {
-          for (const r of extractResourceRoutes(method, path, controllerClass, filePath, node)) {
-            nodes.push(r.node);
-            edges.push(r.edge);
-          }
-        }
+      if (strings.length >= 2) {
+        const key = strings[0];
+        const value = strings[1];
+        if (key === 'prefix') result.prefix = value;
       }
-    } else if (method === 'group' || method === 'controller') {
-      const controller = extractGroupController(node, namespace, context, filePath) ?? groupController;
-      const closure = findClosure(node);
-      if (closure) {
-        collectRoutes(closure, namespace, filePath, context, nodes, edges, controller);
-        return;
+      if (strings.length >= 1 && classConst) {
+        const key = strings[0];
+        if (key === 'controller') {
+          const cls = (classConst.childForFieldName('class') ?? classConst.children.find(c => c.type === 'name'))?.text;
+          if (cls) result.controller = cls;
+        }
       }
     }
   }
-
-  for (let i = 0; i < node.childCount; i++) {
-    collectRoutes(node.child(i), namespace, filePath, context, nodes, edges, groupController);
-  }
+  return result;
 }
 
 function findClosure(node) {
@@ -226,4 +248,58 @@ function findClosure(node) {
     }
   }
   return null;
+}
+
+function collectRoutes(node, namespace, filePath, context, nodes, edges, group) {
+  if (node.type === 'namespace_definition') {
+    const nameNode = node.childForFieldName('name');
+    namespace = nameNode ? nameNode.text : namespace;
+  }
+
+  if (isRouteCall(node)) {
+    const method = node.childForFieldName('name')?.text;
+    const args = getArgs(node);
+
+    if (HTTP_METHODS.has(method)) {
+      const rawPath = extractStringValue(args[0]);
+      if (rawPath) {
+        const path = joinPath(group.prefix, rawPath);
+        const { controllerClass, method: handlerMethod } = resolveHandler(args, namespace, context, filePath, group.controller);
+
+        if (controllerClass) {
+          const route = makeRoute(method, path, filePath, node, `${controllerClass}::${handlerMethod ?? '__invoke'}`);
+          nodes.push(route.node);
+          if (route.edge) edges.push(route.edge);
+        } else if (hasClosure(args.slice(1))) {
+          const route = makeRoute(method, path, filePath, node, null);
+          route.node.metadata.handler = 'Closure';
+          nodes.push(route.node);
+        }
+      }
+    } else if (RESOURCE_METHODS.has(method)) {
+      const rawPath = extractStringValue(args[0]);
+      const classConst = findInArgs(args.slice(1), 'class_constant_access_expression');
+      if (rawPath && classConst) {
+        const path = joinPath(group.prefix, rawPath);
+        const controllerClass = extractClassFromNode(classConst, namespace, context, filePath);
+        if (controllerClass) {
+          for (const r of extractResourceRoutes(method, path, controllerClass, filePath, node)) {
+            nodes.push(r.node);
+            edges.push(r.edge);
+          }
+        }
+      }
+    } else if (method === 'group' || method === 'controller' || method === 'prefix' || method === 'middleware') {
+      const newGroup = extractGroupContext(node, namespace, context, filePath, group);
+      const closure = findClosure(node);
+      if (closure) {
+        collectRoutes(closure, namespace, filePath, context, nodes, edges, newGroup);
+        return;
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    collectRoutes(node.child(i), namespace, filePath, context, nodes, edges, group);
+  }
 }

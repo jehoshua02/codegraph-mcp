@@ -97,6 +97,62 @@ describe('laravel route extractor', () => {
     assert.ok(edges.some(e => e.target === 'App\\Http\\Controllers\\UserController::store'));
   });
 
+  it('resolves Route::group prefix', async () => {
+    const { nodes } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      Route::group(['prefix' => 'api/v1'], function () {
+        Route::get('/users', [UserController::class, 'index']);
+      });
+    `);
+    assert.equal(nodes.length, 1);
+    assert.equal(nodes[0].metadata.path, 'api/v1/users');
+  });
+
+  it('resolves Route::prefix()->group()', async () => {
+    const { nodes } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      Route::prefix('admin')->group(function () {
+        Route::get('/dashboard', [UserController::class, 'index']);
+      });
+    `);
+    assert.equal(nodes[0].metadata.path, 'admin/dashboard');
+  });
+
+  it('resolves nested group prefixes', async () => {
+    const { nodes } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      Route::group(['prefix' => 'api'], function () {
+        Route::group(['prefix' => 'v1'], function () {
+          Route::get('/users', [UserController::class, 'index']);
+        });
+      });
+    `);
+    assert.equal(nodes[0].metadata.path, 'api/v1/users');
+  });
+
+  it('detects closure routes', async () => {
+    const { nodes, edges } = await extract(`<?php
+      Route::get('/health', function () { return 'ok'; });
+    `);
+    assert.equal(nodes.length, 1);
+    assert.equal(nodes[0].type, 'Route');
+    assert.equal(nodes[0].metadata.handler, 'Closure');
+    assert.equal(edges.length, 0);
+  });
+
+  it('resolves prefix + controller group combined', async () => {
+    const { nodes, edges } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      Route::prefix('api')->controller(UserController::class)->group(function () {
+        Route::get('/users', 'index');
+        Route::post('/users', 'store');
+      });
+    `);
+    assert.equal(nodes.length, 2);
+    assert.equal(nodes[0].metadata.path, 'api/users');
+    assert.ok(edges.some(e => e.target === 'App\\Http\\Controllers\\UserController::index'));
+  });
+
   it('detects string Controller@method syntax', async () => {
     const { edges } = await extract(`<?php
       Route::get('/users', 'UserController@index');
