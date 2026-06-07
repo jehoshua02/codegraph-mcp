@@ -13,6 +13,8 @@
    - [ ] Middleware
    - [ ] Scheduled tasks
    - [ ] Accessors/mutators/scopes
+   - [ ] Route groups with closure in variable (`$routes = function() {...}; Route::group([], $routes)`)
+   - [ ] Closure route bodies (trace calls inside closure handlers)
 2. ~~**Multi-repo indexing**~~ — done (Project nodes + CONTAINS_FILE, clearProject scoped)
 3. **Extractor configuration per project** — `.codegraph/config.json` specifies which extractors to enable (e.g. `["php", "laravel"]` vs `["typescript", "nestjs"]`). Currently all extractors run on every project.
 4. **README update** — reflect current install process (MCP config in `~/.claude.json`), remove stale Docker references
