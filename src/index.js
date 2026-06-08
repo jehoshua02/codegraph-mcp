@@ -44,9 +44,11 @@ server.tool('symbol_search',
   }
 );
 
+const edgeTypeSchema = z.union([z.string(), z.array(z.string())]).optional();
+
 server.tool('symbol_inbound',
-  'Find all symbols with edges pointing TO this symbol. Filterable by edge_type.',
-  { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() },
+  'Find all symbols with edges pointing TO this symbol. edge_type can be a string or array of strings.',
+  { qualified_name: z.string(), edge_type: edgeTypeSchema, limit: z.number().optional() },
   async (params) => {
     const results = withDb(db => symbolInbound(db, params));
     return { content: [{ type: 'text', text: JSON.stringify(results) }] };
@@ -54,8 +56,8 @@ server.tool('symbol_inbound',
 );
 
 server.tool('symbol_outbound',
-  'Find all symbols this symbol points TO. Filterable by edge_type.',
-  { qualified_name: z.string(), edge_type: z.string().optional(), limit: z.number().optional() },
+  'Find all symbols this symbol points TO. edge_type can be a string or array of strings.',
+  { qualified_name: z.string(), edge_type: edgeTypeSchema, limit: z.number().optional() },
   async (params) => {
     const results = withDb(db => symbolOutbound(db, params));
     return { content: [{ type: 'text', text: JSON.stringify(results) }] };
@@ -63,8 +65,8 @@ server.tool('symbol_outbound',
 );
 
 server.tool('symbol_trace',
-  'Multi-hop BFS traversal from a symbol. Follow call chains, inheritance, etc.',
-  { qualified_name: z.string(), direction: z.enum(['inbound', 'outbound']).optional(), edge_type: z.string().optional(), depth: z.number().optional(), limit: z.number().optional() },
+  'Multi-hop BFS traversal from a symbol. edge_type can be a string or array of strings to follow multiple edge types.',
+  { qualified_name: z.string(), direction: z.enum(['inbound', 'outbound']).optional(), edge_type: edgeTypeSchema, depth: z.number().optional(), limit: z.number().optional() },
   async (params) => {
     const results = withDb(db => symbolTrace(db, params));
     return { content: [{ type: 'text', text: JSON.stringify(results) }] };

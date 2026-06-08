@@ -64,12 +64,22 @@ describe('queries', () => {
       const results = symbolInbound(db, { qualified_name: 'Nonexistent::method' });
       assert.equal(results.length, 0);
     });
+
+    it('filters by array of edge types', () => {
+      const results = symbolInbound(db, { qualified_name: 'App\\Models\\BaseModel', edge_type: ['EXTENDS', 'IMPLEMENTS'] });
+      assert.ok(results.length > 0);
+    });
   });
 
   describe('symbolOutbound', () => {
     it('finds callees', () => {
       const results = symbolOutbound(db, { qualified_name: 'App\\Services\\UserService::findByEmail', edge_type: 'CALLS' });
       assert.ok(results.some(r => r.qualified_name === 'App\\Models\\User::findByEmail'));
+    });
+
+    it('filters by array of edge types', () => {
+      const results = symbolOutbound(db, { qualified_name: 'App\\Services\\UserService::getUser', edge_type: ['CALLS', 'DISPATCHES_JOB'] });
+      assert.ok(results.length > 0);
     });
   });
 
@@ -88,6 +98,11 @@ describe('queries', () => {
     it('returns empty for isolated symbol', () => {
       const results = symbolTrace(db, { qualified_name: 'App\\Repositories\\UserRepository::findAll', direction: 'inbound', edge_type: 'CALLS', depth: 3 });
       assert.equal(results.length, 0);
+    });
+
+    it('follows multiple edge types', () => {
+      const results = symbolTrace(db, { qualified_name: 'App\\Services\\UserService::getUser', direction: 'outbound', edge_type: ['CALLS', 'EXTENDS'], depth: 2 });
+      assert.ok(results.length > 0);
     });
   });
 

@@ -31,6 +31,14 @@ export function symbolSearch(db, { name, type, file_pattern, count_only = false,
   return { total, results };
 }
 
+function addEdgeTypeFilter(sql, params, edge_type) {
+  if (!edge_type) return sql;
+  const types = Array.isArray(edge_type) ? edge_type : [edge_type];
+  sql += ` AND e.type IN (${types.map(() => '?').join(',')})`;
+  params.push(...types);
+  return sql;
+}
+
 export function symbolInbound(db, { qualified_name, edge_type, limit = 50 }) {
   let sql = `
     SELECT n.*, e.type as edge_type, e.metadata as edge_metadata
@@ -40,11 +48,7 @@ export function symbolInbound(db, { qualified_name, edge_type, limit = 50 }) {
     WHERE target.qualified_name = ?
   `;
   const params = [qualified_name];
-
-  if (edge_type) {
-    sql += ' AND e.type = ?';
-    params.push(edge_type);
-  }
+  sql = addEdgeTypeFilter(sql, params, edge_type);
   sql += ' LIMIT ?';
   params.push(limit);
 
@@ -64,11 +68,7 @@ export function symbolOutbound(db, { qualified_name, edge_type, limit = 50 }) {
     WHERE source.qualified_name = ?
   `;
   const params = [qualified_name];
-
-  if (edge_type) {
-    sql += ' AND e.type = ?';
-    params.push(edge_type);
-  }
+  sql = addEdgeTypeFilter(sql, params, edge_type);
   sql += ' LIMIT ?';
   params.push(limit);
 
