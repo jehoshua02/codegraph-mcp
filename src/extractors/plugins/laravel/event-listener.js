@@ -4,11 +4,15 @@ export default {
   name: 'plugin:laravel:event-listener',
   types: [
     { type: 'LISTENS_TO', kind: 'edge', description: 'Listener handles an event' },
+    { type: 'HANDLES_EVENT', kind: 'edge', description: 'Event dispatcher → listener (derived from DISPATCHES_EVENT + LISTENS_TO)' },
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectEventListenerMappings(tree.rootNode, namespace, filePath, context) };
+  },
+  postExtract(nodes, edges) {
+    deriveHandlesEventEdges(edges);
   },
 };
 
@@ -119,4 +123,29 @@ function extractClassConstants(arrayNode, namespace, context, filePath) {
     }
   }
   return classes;
+}
+
+function deriveHandlesEventEdges(edges) {
+  const listensTo = edges.filter(e => e.type === 'LISTENS_TO');
+  const dispatchesEvent = edges.filter(e => e.type === 'DISPATCHES_EVENT');
+  if (listensTo.length === 0 || dispatchesEvent.length === 0) return;
+
+  const listenersByEvent = new Map();
+  for (const e of listensTo) {
+    const event = e.target;
+    if (!listenersByEvent.has(event)) listenersByEvent.set(event, []);
+    listenersByEvent.get(event).push(e.source);
+  }
+
+  for (const dispatch of dispatchesEvent) {
+    const listeners = listenersByEvent.get(dispatch.target) || [];
+    for (const listener of listeners) {
+      edges.push({
+        source: dispatch.source,
+        target: listener,
+        type: 'HANDLES_EVENT',
+        metadata: { event: dispatch.target, dispatcher: dispatch.source, listener },
+      });
+    }
+  }
 }
