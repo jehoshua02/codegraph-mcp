@@ -16,7 +16,9 @@ export default {
     const closureVarIds = new Set([...closureVars.values()].map(n => nodeKey(n)));
     const nodes = [];
     const edges = [];
+    const arrayVars = collectArrayVariables(tree.rootNode);
     collectRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, { controller: null, prefix: '' }, closureVars, closureVarIds);
+    collectDynamicRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, { controller: null, prefix: '' }, arrayVars);
     return { nodes, edges };
   },
 };
@@ -338,4 +340,160 @@ function collectRoutes(node, namespace, filePath, context, nodes, edges, group, 
   for (let i = 0; i < node.childCount; i++) {
     collectRoutes(node.child(i), namespace, filePath, context, nodes, edges, group, closureVars, closureVarIds);
   }
+}
+
+function collectArrayVariables(rootNode) {
+  const vars = new Map();
+  function walk(node) {
+    if (node.type === 'expression_statement') {
+      const expr = node.child(0);
+      if (expr?.type === 'assignment_expression') {
+        const left = expr.childForFieldName('left');
+        const right = expr.childForFieldName('right');
+        if (left?.type === 'variable_name' && right?.type === 'array_creation_expression') {
+          const strings = [];
+          findStrings(right, strings);
+          if (strings.length > 0) vars.set(left.text, strings);
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i));
+  }
+  walk(rootNode);
+  return vars;
+}
+
+function findStrings(node, results) {
+  if (node.type === 'string') {
+    results.push(node.text.replace(/^['"]|['"]$/g, ''));
+  }
+  for (let i = 0; i < node.childCount; i++) findStrings(node.child(i), results);
+}
+
+function studly(str) {
+  return str.split(/[\s_-]+/).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join('');
+}
+
+function collectDynamicRoutes(rootNode, namespace, filePath, context, nodes, edges, group, arrayVars) {
+  function walk(node, currentGroup) {
+    if (node.type === 'namespace_definition') {
+      const nameNode = node.childForFieldName('name');
+      if (nameNode) namespace = nameNode.text;
+    }
+
+    // Detect Route::group and track prefix
+    if (isRouteCall(node)) {
+      const method = node.childForFieldName('name')?.text;
+      if (method === 'group' || method === 'prefix' || method === 'middleware' || method === 'controller') {
+        const newGroup = extractGroupContext(node, namespace, context, filePath, currentGroup);
+        const args = node.childForFieldName('arguments');
+        if (args) {
+          for (let i = 0; i < args.childCount; i++) walk(args.child(i), newGroup);
+        }
+        return;
+      }
+    }
+
+    // Detect collect($var)->each(closure) where closure contains Route calls
+    if (node.type === 'member_call_expression') {
+      const method = node.childForFieldName('name')?.text;
+      const obj = node.childForFieldName('object');
+      if (method === 'each' && obj?.type === 'function_call_expression' && obj.childForFieldName('function')?.text === 'collect') {
+        const collectArgs = obj.childForFieldName('arguments');
+        const eachArgs = node.childForFieldName('arguments');
+        if (collectArgs && eachArgs) {
+          const varRef = findVariableInArgs(collectArgs);
+          const arrayValues = varRef ? arrayVars.get(varRef) : null;
+          if (arrayValues) {
+            const closure = findClosureInArgs(eachArgs);
+            if (closure && hasRouteCall(closure)) {
+              for (const key of arrayValues) {
+                const route = deriveRouteFromKey(key, closure, namespace, filePath, context, currentGroup);
+                if (route) {
+                  nodes.push(route.node);
+                  if (route.edge) edges.push(route.edge);
+                }
+              }
+              return;
+            }
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i), currentGroup);
+  }
+
+  walk(rootNode, group);
+}
+
+function findVariableInArgs(argsNode) {
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child.type === 'variable_name') return child.text;
+    if (child.type === 'argument') {
+      for (let j = 0; j < child.childCount; j++) {
+        if (child.child(j).type === 'variable_name') return child.child(j).text;
+      }
+    }
+  }
+  return null;
+}
+
+function findClosureInArgs(argsNode) {
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child.type === 'anonymous_function' || child.type === 'anonymous_function_creation_expression') return child;
+    if (child.type === 'argument') {
+      for (let j = 0; j < child.childCount; j++) {
+        const t = child.child(j).type;
+        if (t === 'anonymous_function' || t === 'anonymous_function_creation_expression') return child.child(j);
+      }
+    }
+  }
+  return null;
+}
+
+function hasRouteCall(node) {
+  if (node.type === 'scoped_call_expression') {
+    const scope = node.childForFieldName('scope')?.text;
+    const method = node.childForFieldName('name')?.text;
+    if (scope === 'Route' && HTTP_METHODS.has(method)) return true;
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    if (hasRouteCall(node.child(i))) return true;
+  }
+  return false;
+}
+
+function findRouteMethodInClosure(node) {
+  if (node.type === 'scoped_call_expression') {
+    const scope = node.childForFieldName('scope')?.text;
+    const method = node.childForFieldName('name')?.text;
+    if (scope === 'Route' && HTTP_METHODS.has(method)) return method;
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    const found = findRouteMethodInClosure(node.child(i));
+    if (found) return found;
+  }
+  return null;
+}
+
+function deriveRouteFromKey(routingKey, closure, namespace, filePath, context, group) {
+  const httpMethod = findRouteMethodInClosure(closure) || 'post';
+  const url = routingKey.replace(/\./g, '/');
+  const path = joinPath(group.prefix, url);
+
+  const parts = routingKey.split('.');
+  const method = parts.pop();
+  const prefix = parts.join(' ');
+  const controllerName = studly(prefix) + 'EventController';
+  let controllerClass = resolveClassName('EventConsumer\\' + controllerName, namespace, context, filePath);
+  if (!controllerClass.startsWith('App\\')) controllerClass = 'App\\Http\\Controllers\\' + controllerClass;
+
+  const routeQn = `route::${httpMethod}::${path}`;
+  return {
+    node: { type: 'Route', name: path, qualified_name: routeQn, file_path: filePath, start_line: closure.startPosition.row + 1, end_line: closure.endPosition.row + 1, metadata: { http_method: httpMethod.toUpperCase(), path, dynamic: true } },
+    edge: { source: routeQn, target: `${controllerClass}::${method}`, type: 'ROUTE_HANDLES' },
+  };
 }
