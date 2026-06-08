@@ -142,7 +142,7 @@ function deriveHandlesEventEdges(edges) {
     for (const listener of listeners) {
       edges.push({
         source: dispatch.source,
-        target: listener,
+        target: `${listener}::handle`,
         type: 'HANDLES_EVENT',
         metadata: { event: dispatch.target, dispatcher: dispatch.source, listener },
       });
