@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>codegraph-mcp</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; font-size: 13px; }
+
+  #header { padding: 8px 16px; background: #161b22; border-bottom: 1px solid #30363d; display: flex; align-items: center; gap: 12px; }
+  #header h1 { font-size: 14px; color: #58a6ff; font-weight: 600; }
+  #search { flex: 1; max-width: 500px; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; font-family: inherit; }
+  #search:focus { outline: none; border-color: #58a6ff; }
+  #breadcrumbs { padding: 4px 16px; background: #161b22; border-bottom: 1px solid #21262d; font-size: 12px; color: #8b949e; min-height: 24px; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .crumb { cursor: pointer; color: #58a6ff; }
+  .crumb:hover { text-decoration: underline; }
+  .crumb-sep { color: #484f58; }
+
+  #main { display: grid; grid-template-columns: 1fr 1.2fr 1fr; height: calc(100vh - 68px); }
+  .panel { overflow-y: auto; padding: 12px; border-right: 1px solid #21262d; }
+  .panel:last-child { border-right: none; }
+  .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 8px; font-weight: 600; }
+
+  .edge-group { margin-bottom: 12px; }
+  .edge-type-label { font-size: 11px; color: #f0883e; font-weight: 600; margin-bottom: 4px; padding: 2px 6px; background: #f0883e15; border-radius: 3px; display: inline-block; }
+  .edge-list { list-style: none; }
+  .edge-item { padding: 4px 8px; cursor: pointer; border-radius: 4px; display: flex; flex-direction: column; gap: 1px; }
+  .edge-item:hover { background: #1f2937; }
+  .edge-item-name { color: #c9d1d9; font-weight: 500; }
+  .edge-item-qn { color: #8b949e; font-size: 11px; word-break: break-all; }
+  .edge-item-type { color: #484f58; font-size: 10px; }
+
+  #center { padding: 16px; }
+  .symbol-name { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
+  .symbol-qn { color: #8b949e; font-size: 12px; margin-bottom: 12px; word-break: break-all; }
+  .symbol-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin-bottom: 16px; font-size: 12px; }
+  .meta-key { color: #8b949e; }
+  .meta-val { color: #c9d1d9; }
+  .meta-val a { color: #58a6ff; text-decoration: none; }
+
+  .section { margin-top: 16px; }
+  .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 6px; font-weight: 600; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
+  .rel-item { padding: 3px 0; cursor: pointer; color: #58a6ff; }
+  .rel-item:hover { text-decoration: underline; }
+  .rel-meta { color: #8b949e; font-size: 11px; }
+
+  .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; }
+  .tag-class { background: #1f6feb30; color: #58a6ff; }
+  .tag-method { background: #23863530; color: #3fb950; }
+  .tag-route { background: #f0883e20; color: #f0883e; }
+  .tag-function { background: #bc8cff20; color: #bc8cff; }
+  .tag-interface { background: #f7844020; color: #f78440; }
+  .tag-trait { background: #da367020; color: #da3670; }
+  .tag-file { background: #48505820; color: #8b949e; }
+  .tag-default { background: #30363d; color: #8b949e; }
+
+  #search-results { position: absolute; top: 36px; left: 0; right: 0; background: #161b22; border: 1px solid #30363d; border-radius: 6px; max-height: 400px; overflow-y: auto; z-index: 10; display: none; }
+  #search-wrapper { position: relative; flex: 1; max-width: 500px; }
+  .search-item { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  .search-item:hover { background: #1f2937; }
+
+  .empty { color: #484f58; font-style: italic; padding: 8px; }
+</style>
+</head>
+<body>
+  <div id="header">
+    <h1>codegraph</h1>
+    <div id="search-wrapper">
+      <input id="search" placeholder="Search symbols..." autocomplete="off">
+      <div id="search-results"></div>
+    </div>
+  </div>
+  <div id="breadcrumbs"></div>
+  <div id="main">
+    <div class="panel" id="left"><div class="panel-title">Inbound</div><div id="inbound-content"></div></div>
+    <div class="panel" id="center"><div class="empty">Search for a symbol to begin</div></div>
+    <div class="panel" id="right"><div class="panel-title">Outbound</div><div id="outbound-content"></div></div>
+  </div>
+
+<script>
+const history = [];
+let debounceTimer = null;
+
+const $ = (id) => document.getElementById(id);
+
+function typeTag(type) {
+  const cls = { Class: 'class', Method: 'method', Route: 'route', Function: 'function', Interface: 'interface', Trait: 'trait', File: 'file' }[type] || 'default';
+  return `<span class="tag tag-${cls}">${type}</span>`;
+}
+
+function shortName(qn) {
+  if (!qn) return '';
+  const parts = qn.split('\\');
+  return parts[parts.length - 1];
+}
+
+async function api(path, params = {}) {
+  const url = new URL(path, location.origin);
+  for (const [k, v] of Object.entries(params)) { if (v != null) url.searchParams.set(k, v); }
+  const res = await fetch(url);
+  return res.json();
+}
+
+$('search').addEventListener('input', (e) => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => doSearch(e.target.value), 200);
+});
+
+$('search').addEventListener('focus', () => {
+  if ($('search').value.length > 1) doSearch($('search').value);
+});
+
+document.addEventListener('click', (e) => {
+  if (!$('search-wrapper').contains(e.target)) $('search-results').style.display = 'none';
+});
+
+async function doSearch(query) {
+  if (query.length < 2) { $('search-results').style.display = 'none'; return; }
+  const data = await api('/api/search', { name: query, limit: 20 });
+  const results = data.results || data;
+  const el = $('search-results');
+  el.innerHTML = results.map(r => `
+    <div class="search-item" data-qn="${r.qualified_name}">
+      ${typeTag(r.type)}
+      <span>${shortName(r.qualified_name)}</span>
+      <span style="color:#484f58;font-size:11px">${r.qualified_name}</span>
+    </div>
+  `).join('');
+  el.style.display = results.length ? 'block' : 'none';
+  el.querySelectorAll('.search-item').forEach(item => {
+    item.addEventListener('click', () => { navigate(item.dataset.qn); el.style.display = 'none'; $('search').value = ''; });
+  });
+}
+
+function navigate(qn) {
+  history.push(qn);
+  renderBreadcrumbs();
+  loadSymbol(qn);
+}
+
+function renderBreadcrumbs() {
+  const el = $('breadcrumbs');
+  const unique = [...new Set(history)].slice(-8);
+  el.innerHTML = unique.map((qn, i) => {
+    const last = i === unique.length - 1;
+    return `<span class="crumb${last ? '' : ''}" data-qn="${qn}" style="${last ? 'color:#c9d1d9;font-weight:600' : ''}">${shortName(qn)}</span>${i < unique.length - 1 ? '<span class="crumb-sep">›</span>' : ''}`;
+  }).join('');
+  el.querySelectorAll('.crumb').forEach(c => c.addEventListener('click', () => navigate(c.dataset.qn)));
+}
+
+async function loadSymbol(qn) {
+  const data = await api('/api/symbol', { qn });
+  if (!data || !data.node) { $('center').innerHTML = '<div class="empty">Symbol not found</div>'; return; }
+
+  const { node, edges } = data;
+  const inbound = edges.filter(e => e.target_qn === qn && e.source_qn !== qn);
+  const outbound = edges.filter(e => e.source_qn === qn && e.target_qn !== qn);
+
+  renderCenter(node, edges);
+  renderEdges($('inbound-content'), inbound, 'source');
+  renderEdges($('outbound-content'), outbound, 'target');
+}
+
+function renderCenter(node, edges) {
+  const meta = node.metadata || {};
+  let html = `
+    <div class="symbol-name">${typeTag(node.type)} ${node.name}</div>
+    <div class="symbol-qn">${node.qualified_name}</div>
+    <div class="symbol-meta">
+      <span class="meta-key">File</span><span class="meta-val"><a href="#">${node.file_path?.split('/').slice(-3).join('/') || '(inferred)'}</a></span>
+      <span class="meta-key">Lines</span><span class="meta-val">${node.start_line || '?'}–${node.end_line || '?'}</span>
+  `;
+  if (meta.visibility) html += `<span class="meta-key">Visibility</span><span class="meta-val">${meta.visibility}</span>`;
+  if (meta.static) html += `<span class="meta-key">Static</span><span class="meta-val">yes</span>`;
+  if (meta.params?.length) html += `<span class="meta-key">Params</span><span class="meta-val">${meta.params.map(p => `${p.type || ''}${p.type ? ' ' : ''}$${p.name}`).join(', ')}</span>`;
+  if (meta.inferred) html += `<span class="meta-key">Inferred</span><span class="meta-val">yes (not defined in source)</span>`;
+  if (meta.http_method) html += `<span class="meta-key">HTTP</span><span class="meta-val">${meta.http_method} ${meta.path}</span>`;
+  if (meta.table) html += `<span class="meta-key">Table</span><span class="meta-val">${meta.table}</span>`;
+  html += `</div>`;
+
+  // Relationships
+  const relationships = edges.filter(e => e.type === 'HAS_RELATIONSHIP' && e.source_qn === node.qualified_name);
+  if (relationships.length) {
+    html += `<div class="section"><div class="section-title">Relationships</div>`;
+    for (const r of relationships) {
+      const meta = r.metadata ? JSON.parse(r.metadata) : {};
+      html += `<div class="rel-item" data-qn="${r.target_qn}" onclick="navigate('${r.target_qn}')">${meta.method || ''} → ${r.target_name} <span class="rel-meta">(${meta.relationship || ''})</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Table mapping
+  const tables = edges.filter(e => e.type === 'MAPS_TO_TABLE' && e.source_qn === node.qualified_name);
+  if (tables.length) {
+    html += `<div class="section"><div class="section-title">Database Table</div>`;
+    for (const t of tables) {
+      const meta = t.metadata ? JSON.parse(t.metadata) : {};
+      html += `<div style="color:#3fb950;font-weight:500">${meta.table}</div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Observer triggers
+  const triggers = edges.filter(e => e.type === 'TRIGGERS_OBSERVER' && e.source_qn === node.qualified_name);
+  if (triggers.length) {
+    html += `<div class="section"><div class="section-title">Observer Triggers</div>`;
+    for (const t of triggers) {
+      const meta = t.metadata ? JSON.parse(t.metadata) : {};
+      html += `<div class="rel-item" data-qn="${t.target_qn}" onclick="navigate('${t.target_qn}')">${meta.event} → ${shortName(t.target_qn)} <span class="rel-meta">(${meta.observer ? shortName(meta.observer) : ''})</span></div>`;
+    }
+    html += `</div>`;
+  }
+
+  $('center').innerHTML = html;
+}
+
+function renderEdges(container, edges, side) {
+  const grouped = {};
+  for (const e of edges) {
+    const type = e.type;
+    if (!grouped[type]) grouped[type] = [];
+    const qn = side === 'source' ? e.source_qn : e.target_qn;
+    const name = side === 'source' ? e.source_name : e.target_name;
+    const nodeType = side === 'source' ? e.source_type : e.target_type;
+    if (!grouped[type].find(x => x.qn === qn)) {
+      grouped[type].push({ qn, name, nodeType, metadata: e.metadata });
+    }
+  }
+
+  const structural = new Set(['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS', 'CONTAINS_FILE']);
+  const sortedTypes = Object.keys(grouped).sort((a, b) => {
+    if (structural.has(a) && !structural.has(b)) return 1;
+    if (!structural.has(a) && structural.has(b)) return -1;
+    return a.localeCompare(b);
+  });
+
+  let html = '';
+  for (const type of sortedTypes) {
+    const items = grouped[type];
+    html += `<div class="edge-group">
+      <div class="edge-type-label">${type} (${items.length})</div>
+      <ul class="edge-list">`;
+    for (const item of items.slice(0, 50)) {
+      html += `<li class="edge-item" data-qn="${item.qn}" onclick="navigate('${item.qn.replace(/\\/g, '\\\\')}')">
+        <span class="edge-item-name">${typeTag(item.nodeType)} ${item.name}</span>
+        <span class="edge-item-qn">${item.qn}</span>
+      </li>`;
+    }
+    if (items.length > 50) html += `<li class="edge-item"><span class="edge-item-name" style="color:#484f58">... and ${items.length - 50} more</span></li>`;
+    html += `</ul></div>`;
+  }
+
+  container.innerHTML = html || '<div class="empty">None</div>';
+}
+</script>
+</body>
+</html>

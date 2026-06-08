@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node src/index.js",
+    "serve": "node src/web/server.js",
     "index": "node src/cli.js index",
     "test": "node --test test/extractors/*.test.js test/extractors/**/*.test.js test/*.test.js",
     "test:unit": "node --test test/extractors/*.test.js test/extractors/**/*.test.js",
