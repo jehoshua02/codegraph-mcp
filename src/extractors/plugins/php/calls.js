@@ -152,8 +152,57 @@ function findPropertyType(propName, node) {
 
 // --- Calculate: resolve raw type names to qualified names ---
 
+function findResolveAssignmentType(varName, node) {
+  let current = node.parent;
+  while (current) {
+    if (current.type === 'compound_statement' || current.type === 'method_declaration' || current.type === 'function_definition') {
+      for (let i = 0; i < current.childCount; i++) {
+        const child = current.child(i);
+        if (child.type === 'expression_statement') {
+          const expr = child.child(0);
+          if (expr?.type === 'assignment_expression') {
+            const left = expr.childForFieldName('left');
+            const right = expr.childForFieldName('right');
+            if (left?.text === varName && right?.type === 'function_call_expression') {
+              const className = extractResolveClass(right);
+              if (className) return className;
+            }
+          }
+        }
+      }
+      break;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function extractResolveClass(funcCallNode) {
+  const funcName = funcCallNode.childForFieldName('function');
+  if (!funcName) return null;
+  const name = funcName.text;
+  if (name !== 'resolve' && name !== 'app') return null;
+  const args = funcCallNode.childForFieldName('arguments');
+  if (!args) return null;
+  for (let i = 0; i < args.childCount; i++) {
+    const arg = args.child(i);
+    if (arg.type === 'class_constant_access_expression') return extractClassFromConstAccess(arg);
+    if (arg.type === 'argument') {
+      for (let j = 0; j < arg.childCount; j++) {
+        if (arg.child(j).type === 'class_constant_access_expression') return extractClassFromConstAccess(arg.child(j));
+      }
+    }
+  }
+  return null;
+}
+
+function extractClassFromConstAccess(node) {
+  const cls = node.childForFieldName('class') ?? node.children?.find(c => c.type === 'name' || c.type === 'qualified_name');
+  return cls?.text ?? null;
+}
+
 function resolveVariableType(varName, node, namespace, context, filePath) {
-  const rawType = findParameterType(varName, node) ?? findConstructorPromotedType(varName, node);
+  const rawType = findParameterType(varName, node) ?? findConstructorPromotedType(varName, node) ?? findResolveAssignmentType(varName, node);
   if (!rawType || isPrimitiveType(rawType)) return null;
   return resolveClassName(rawType, namespace, context, filePath);
 }
@@ -206,6 +255,13 @@ function extractCallEdge(node, namespace, filePath, context) {
       if (obj?.text === '$this' && prop) {
         const propType = resolvePropertyType(prop, node, namespace, context, filePath);
         return propType ? { source: caller, target: `${propType}::${name}`, type: 'CALLS' } : null;
+      }
+    }
+    if (object?.type === 'function_call_expression') {
+      const resolvedClass = extractResolveClass(object);
+      if (resolvedClass) {
+        const targetClass = resolveClassName(resolvedClass, namespace, context, filePath);
+        return { source: caller, target: `${targetClass}::${name}`, type: 'CALLS' };
       }
     }
     return null;

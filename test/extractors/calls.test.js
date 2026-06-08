@@ -85,4 +85,22 @@ describe('call extractor', () => {
     const call = edges.find(e => e.target.includes('User'));
     assert.equal(call.target, 'App\\Models\\User::save');
   });
+
+  it('resolves resolve(Foo::class)->method() chained call', async () => {
+    const { edges } = await extract('<?php namespace App\\Jobs; use App\\Services\\FooService; class MyJob { public function handle() { resolve(FooService::class)->doWork(); } }');
+    const call = edges.find(e => e.target.includes('FooService'));
+    assert.equal(call.target, 'App\\Services\\FooService::doWork');
+  });
+
+  it('resolves $var = resolve(Foo::class); $var->method()', async () => {
+    const { edges } = await extract(`<?php namespace App\\Jobs; use App\\Services\\FooService; class MyJob { public function handle() { $svc = resolve(FooService::class); $svc->doWork(); } }`);
+    const call = edges.find(e => e.target.includes('FooService'));
+    assert.equal(call.target, 'App\\Services\\FooService::doWork');
+  });
+
+  it('resolves app(Foo::class)->method()', async () => {
+    const { edges } = await extract('<?php namespace App\\Jobs; use App\\Services\\FooService; class MyJob { public function handle() { app(FooService::class)->doWork(); } }');
+    const call = edges.find(e => e.target.includes('FooService'));
+    assert.equal(call.target, 'App\\Services\\FooService::doWork');
+  });
 });
