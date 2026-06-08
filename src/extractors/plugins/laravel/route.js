@@ -12,9 +12,11 @@ export default {
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
     const namespace = extractNamespace(tree.rootNode);
+    const closureVars = collectClosureVariables(tree.rootNode);
+    const closureVarIds = new Set([...closureVars.values()].map(n => nodeKey(n)));
     const nodes = [];
     const edges = [];
-    collectRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, { controller: null, prefix: '' });
+    collectRoutes(tree.rootNode, namespace, filePath, context, nodes, edges, { controller: null, prefix: '' }, closureVars, closureVarIds);
     return { nodes, edges };
   },
 };
@@ -234,7 +236,25 @@ function extractArrayConfig(arrayNode) {
   return result;
 }
 
-function findClosure(node) {
+function collectClosureVariables(rootNode) {
+  const vars = new Map();
+  for (let i = 0; i < rootNode.childCount; i++) {
+    const child = rootNode.child(i);
+    if (child.type === 'expression_statement') {
+      const expr = child.child(0);
+      if (expr?.type === 'assignment_expression') {
+        const left = expr.childForFieldName('left');
+        const right = expr.childForFieldName('right');
+        if (left?.type === 'variable_name' && (right?.type === 'anonymous_function' || right?.type === 'anonymous_function_creation_expression')) {
+          vars.set(left.text, right);
+        }
+      }
+    }
+  }
+  return vars;
+}
+
+function findClosure(node, closureVars) {
   const args = node.childForFieldName('arguments');
   if (!args) return null;
   for (let i = 0; i < args.childCount; i++) {
@@ -242,15 +262,31 @@ function findClosure(node) {
     if (child.type === 'anonymous_function_creation_expression' || child.type === 'anonymous_function') return child;
     if (child.type === 'argument') {
       for (let j = 0; j < child.childCount; j++) {
-        const t = child.child(j).type;
-        if (t === 'anonymous_function_creation_expression' || t === 'anonymous_function') return child.child(j);
+        const inner = child.child(j);
+        if (inner.type === 'anonymous_function_creation_expression' || inner.type === 'anonymous_function') return inner;
+        if (inner.type === 'variable_name' && closureVars?.has(inner.text)) return closureVars.get(inner.text);
       }
     }
+    if (child.type === 'variable_name' && closureVars?.has(child.text)) return closureVars.get(child.text);
   }
   return null;
 }
 
-function collectRoutes(node, namespace, filePath, context, nodes, edges, group) {
+function nodeKey(node) {
+  return `${node.startIndex}:${node.endIndex}`;
+}
+
+function isClosureVariable(node, closureVarKeys) {
+  if (!closureVarKeys) return false;
+  if (node.type === 'anonymous_function' || node.type === 'anonymous_function_creation_expression') {
+    return closureVarKeys.has(nodeKey(node));
+  }
+  return false;
+}
+
+function collectRoutes(node, namespace, filePath, context, nodes, edges, group, closureVars, closureVarIds, insideGroupClosure = false) {
+  if (!insideGroupClosure && isClosureVariable(node, closureVarIds)) return;
+
   if (node.type === 'namespace_definition') {
     const nameNode = node.childForFieldName('name');
     namespace = nameNode ? nameNode.text : namespace;
@@ -291,15 +327,15 @@ function collectRoutes(node, namespace, filePath, context, nodes, edges, group) 
       }
     } else if (method === 'group' || method === 'controller' || method === 'prefix' || method === 'middleware') {
       const newGroup = extractGroupContext(node, namespace, context, filePath, group);
-      const closure = findClosure(node);
+      const closure = findClosure(node, closureVars);
       if (closure) {
-        collectRoutes(closure, namespace, filePath, context, nodes, edges, newGroup);
+        collectRoutes(closure, namespace, filePath, context, nodes, edges, newGroup, closureVars, closureVarIds, true);
         return;
       }
     }
   }
 
   for (let i = 0; i < node.childCount; i++) {
-    collectRoutes(node.child(i), namespace, filePath, context, nodes, edges, group);
+    collectRoutes(node.child(i), namespace, filePath, context, nodes, edges, group, closureVars, closureVarIds);
   }
 }

@@ -130,6 +130,35 @@ describe('laravel route extractor', () => {
     assert.equal(nodes[0].metadata.path, 'api/v1/users');
   });
 
+  it('resolves closure variable in Route::group', async () => {
+    const { nodes, edges } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      $apiRoutes = function () {
+        Route::get('/users', [UserController::class, 'index']);
+        Route::post('/users', [UserController::class, 'store']);
+      };
+      Route::group(['prefix' => 'api/v1'], $apiRoutes);
+    `);
+    assert.equal(nodes.length, 2);
+    assert.equal(nodes[0].metadata.path, 'api/v1/users');
+    assert.ok(edges.some(e => e.target === 'App\\Http\\Controllers\\UserController::index'));
+  });
+
+  it('resolves closure variable reused in multiple groups', async () => {
+    const { nodes } = await extract(`<?php
+      use App\\Http\\Controllers\\UserController;
+      $routes = function () {
+        Route::get('/list', [UserController::class, 'index']);
+      };
+      Route::group(['prefix' => 'public'], $routes);
+      Route::group(['prefix' => 'internal'], $routes);
+    `);
+    assert.equal(nodes.length, 2);
+    const paths = nodes.map(n => n.metadata.path);
+    assert.ok(paths.includes('public/list'));
+    assert.ok(paths.includes('internal/list'));
+  });
+
   it('detects closure routes', async () => {
     const { nodes, edges } = await extract(`<?php
       Route::get('/health', function () { return 'ok'; });
