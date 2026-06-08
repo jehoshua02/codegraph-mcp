@@ -129,6 +129,16 @@ const ELOQUENT_EVENTS = new Set([
   'forceDeleting', 'forceDeleted',
 ]);
 
+const MODEL_METHOD_TO_EVENTS = {
+  save: ['saving', 'saved', 'creating', 'created', 'updating', 'updated'],
+  create: ['saving', 'saved', 'creating', 'created'],
+  update: ['saving', 'saved', 'updating', 'updated'],
+  delete: ['deleting', 'deleted'],
+  forceDelete: ['forceDeleting', 'forceDeleted'],
+  restore: ['restoring', 'restored'],
+  fill: ['saving', 'saved', 'creating', 'created', 'updating', 'updated'],
+};
+
 function deriveObserverTriggers(nodes, edges) {
   const observesEdges = edges.filter(e => e.type === 'OBSERVES');
   if (observesEdges.length === 0) return;
@@ -145,9 +155,11 @@ function deriveObserverTriggers(nodes, edges) {
   for (const edge of observesEdges) {
     const observerClass = edge.source;
     const modelClass = edge.target;
-    const methods = methodsByClass.get(observerClass) || [];
+    const observerMethods = methodsByClass.get(observerClass) || [];
+    const observerEventNames = new Set(observerMethods.filter(m => ELOQUENT_EVENTS.has(m.name)).map(m => m.name));
 
-    for (const method of methods) {
+    // Class → observer method edges
+    for (const method of observerMethods) {
       if (ELOQUENT_EVENTS.has(method.name)) {
         edges.push({
           source: modelClass,
@@ -155,6 +167,24 @@ function deriveObserverTriggers(nodes, edges) {
           type: 'TRIGGERS_OBSERVER',
           metadata: { event: method.name, observer: observerClass, model: modelClass },
         });
+      }
+    }
+
+    // Model::save/create/update/delete → observer method edges
+    for (const [modelMethod, events] of Object.entries(MODEL_METHOD_TO_EVENTS)) {
+      const modelMethodQn = `${modelClass}::${modelMethod}`;
+      for (const eventName of events) {
+        if (observerEventNames.has(eventName)) {
+          const observerMethod = observerMethods.find(m => m.name === eventName);
+          if (observerMethod) {
+            edges.push({
+              source: modelMethodQn,
+              target: observerMethod.qualified_name,
+              type: 'TRIGGERS_OBSERVER',
+              metadata: { event: eventName, observer: observerClass, model: modelClass, via: modelMethod },
+            });
+          }
+        }
       }
     }
   }
