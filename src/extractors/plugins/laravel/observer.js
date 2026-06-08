@@ -4,11 +4,15 @@ export default {
   name: 'plugin:laravel:observer',
   types: [
     { type: 'OBSERVES', kind: 'edge', description: 'Observer watches a model' },
+    { type: 'TRIGGERS_OBSERVER', kind: 'edge', description: 'Model lifecycle event triggers an observer method' },
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectObserverRegistrations(tree.rootNode, namespace, filePath, context) };
+  },
+  postExtract(nodes, edges) {
+    deriveObserverTriggers(nodes, edges);
   },
 };
 
@@ -117,4 +121,41 @@ function collectObserverRegistrations(node, namespace, filePath, context) {
   }
 
   return edges;
+}
+
+const ELOQUENT_EVENTS = new Set([
+  'creating', 'created', 'updating', 'updated', 'saving', 'saved',
+  'deleting', 'deleted', 'restoring', 'restored', 'retrieved', 'replicating',
+  'forceDeleting', 'forceDeleted',
+]);
+
+function deriveObserverTriggers(nodes, edges) {
+  const observesEdges = edges.filter(e => e.type === 'OBSERVES');
+  if (observesEdges.length === 0) return;
+
+  const methodsByClass = new Map();
+  for (const node of nodes) {
+    if (node.type === 'Method' && node.qualified_name?.includes('::')) {
+      const [classQn] = node.qualified_name.split('::');
+      if (!methodsByClass.has(classQn)) methodsByClass.set(classQn, []);
+      methodsByClass.get(classQn).push(node);
+    }
+  }
+
+  for (const edge of observesEdges) {
+    const observerClass = edge.source;
+    const modelClass = edge.target;
+    const methods = methodsByClass.get(observerClass) || [];
+
+    for (const method of methods) {
+      if (ELOQUENT_EVENTS.has(method.name)) {
+        edges.push({
+          source: modelClass,
+          target: method.qualified_name,
+          type: 'TRIGGERS_OBSERVER',
+          metadata: { event: method.name, observer: observerClass, model: modelClass },
+        });
+      }
+    }
+  }
 }

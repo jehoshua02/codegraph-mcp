@@ -68,6 +68,14 @@ function getGraphCounts(db) {
   };
 }
 
+function runPostExtract(extractors, nodes, edges) {
+  for (const ext of extractors) {
+    if (typeof ext.postExtract === 'function') {
+      ext.postExtract(nodes, edges);
+    }
+  }
+}
+
 function deduplicateNodes(nodes) {
   const seen = new Map();
   return nodes.filter(n => {
@@ -122,6 +130,7 @@ export async function index(rootDir, dbPath, { project, pluginExtractors = [] } 
   const { nodes, edges } = extractGraph(parsed, extractors, context);
   nodes.unshift({ type: 'Project', name: projectName, qualified_name: `project::${projectName}`, file_path: rootDir, start_line: null, end_line: null });
 
+  runPostExtract(extractors, nodes, edges);
   const inferred = inferMissingNodes(nodes, edges);
   nodes.push(...inferred);
 
