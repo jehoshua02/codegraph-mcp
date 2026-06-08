@@ -14,10 +14,13 @@ export function qualify(namespace, name) {
 }
 
 export function resolveClassName(name, namespace, context, filePath) {
-  if (name.includes('\\')) return name.replace(/^\\/, '');
+  if (name.startsWith('\\')) return name.slice(1);
   if (context?.importMap) {
     const resolved = context.importMap.get(`${filePath}::${name}`);
     if (resolved) return resolved;
+    const firstPart = name.split('\\')[0];
+    const resolvedPrefix = context.importMap.get(`${filePath}::${firstPart}`);
+    if (resolvedPrefix) return name.replace(firstPart, resolvedPrefix);
   }
   return qualify(namespace, name);
 }
