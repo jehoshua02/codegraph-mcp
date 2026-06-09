@@ -29,7 +29,6 @@
   .edge-item:hover { background: #1f2937; }
   .edge-item-name { color: #c9d1d9; font-weight: 500; }
   .edge-item-qn { color: #8b949e; font-size: 11px; word-break: break-all; }
-  .edge-item-type { color: #484f58; font-size: 10px; }
 
   #center { padding: 16px; }
   .symbol-name { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
@@ -37,12 +36,11 @@
   .symbol-meta { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin-bottom: 16px; font-size: 12px; }
   .meta-key { color: #8b949e; }
   .meta-val { color: #c9d1d9; }
-  .meta-val a { color: #58a6ff; text-decoration: none; }
 
   .section { margin-top: 16px; }
   .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 6px; font-weight: 600; border-bottom: 1px solid #21262d; padding-bottom: 4px; }
-  .rel-item { padding: 3px 0; cursor: pointer; color: #58a6ff; }
-  .rel-item:hover { text-decoration: underline; }
+  .nav-link { padding: 3px 0; cursor: pointer; color: #58a6ff; }
+  .nav-link:hover { text-decoration: underline; }
   .rel-meta { color: #8b949e; font-size: 11px; }
 
   .tag { display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 11px; font-weight: 500; }
@@ -61,6 +59,7 @@
   .search-item:hover { background: #1f2937; }
 
   .empty { color: #484f58; font-style: italic; padding: 8px; }
+  .loading { color: #484f58; padding: 8px; }
 </style>
 </head>
 <body>
@@ -79,14 +78,15 @@
   </div>
 
 <script>
-const history = [];
+const navHistory = [];
 let debounceTimer = null;
 
-const $ = (id) => document.getElementById(id);
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 function typeTag(type) {
-  const cls = { Class: 'class', Method: 'method', Route: 'route', Function: 'function', Interface: 'interface', Trait: 'trait', File: 'file' }[type] || 'default';
-  return `<span class="tag tag-${cls}">${type}</span>`;
+  const cls = { Class: 'class', Method: 'method', Route: 'route', Function: 'function', Interface: 'interface', Trait: 'trait', File: 'file', Property: 'property', Enum: 'class' }[type] || 'default';
+  return `<span class="tag tag-${cls}">${esc(type)}</span>`;
 }
 
 function shortName(qn) {
@@ -102,56 +102,74 @@ async function api(path, params = {}) {
   return res.json();
 }
 
-$('search').addEventListener('input', (e) => {
+// Event delegation for all navigable clicks
+document.addEventListener('click', e => {
+  const nav = e.target.closest('[data-nav]');
+  if (nav) { navigate(nav.dataset.nav); return; }
+  if (!$('search-wrapper').contains(e.target)) $('search-results').style.display = 'none';
+});
+
+$('search').addEventListener('input', e => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => doSearch(e.target.value), 200);
+});
+
+$('search').addEventListener('keydown', e => {
+  if (e.key === 'Escape') { $('search-results').style.display = 'none'; $('search').blur(); }
 });
 
 $('search').addEventListener('focus', () => {
   if ($('search').value.length > 1) doSearch($('search').value);
 });
 
-document.addEventListener('click', (e) => {
-  if (!$('search-wrapper').contains(e.target)) $('search-results').style.display = 'none';
-});
-
 async function doSearch(query) {
   if (query.length < 2) { $('search-results').style.display = 'none'; return; }
   const data = await api('/api/search', { name: query, limit: 20 });
-  const results = data.results || data;
+  const results = data.results || [];
   const el = $('search-results');
-  el.innerHTML = results.map(r => `
-    <div class="search-item" data-qn="${r.qualified_name}">
-      ${typeTag(r.type)}
-      <span>${shortName(r.qualified_name)}</span>
-      <span style="color:#484f58;font-size:11px">${r.qualified_name}</span>
-    </div>
-  `).join('');
+  el.innerHTML = results.map(r =>
+    `<div class="search-item" data-nav="${esc(r.qualified_name)}">${typeTag(r.type)} <span>${esc(shortName(r.qualified_name))}</span> <span style="color:#484f58;font-size:11px">${esc(r.qualified_name)}</span></div>`
+  ).join('');
   el.style.display = results.length ? 'block' : 'none';
-  el.querySelectorAll('.search-item').forEach(item => {
-    item.addEventListener('click', () => { navigate(item.dataset.qn); el.style.display = 'none'; $('search').value = ''; });
-  });
 }
 
 function navigate(qn) {
-  history.push(qn);
+  $('search-results').style.display = 'none';
+  $('search').value = '';
+  navHistory.push(qn);
+  window.history.pushState({ qn }, '', `#${encodeURIComponent(qn)}`);
   renderBreadcrumbs();
   loadSymbol(qn);
 }
 
+window.addEventListener('popstate', e => {
+  if (e.state?.qn) { loadSymbol(e.state.qn); renderBreadcrumbs(); }
+});
+
+window.addEventListener('load', () => {
+  const hash = decodeURIComponent(location.hash.slice(1));
+  if (hash) { navHistory.push(hash); renderBreadcrumbs(); loadSymbol(hash); }
+});
+
 function renderBreadcrumbs() {
   const el = $('breadcrumbs');
-  const unique = [...new Set(history)].slice(-8);
-  el.innerHTML = unique.map((qn, i) => {
-    const last = i === unique.length - 1;
-    return `<span class="crumb${last ? '' : ''}" data-qn="${qn}" style="${last ? 'color:#c9d1d9;font-weight:600' : ''}">${shortName(qn)}</span>${i < unique.length - 1 ? '<span class="crumb-sep">›</span>' : ''}`;
+  const trail = navHistory.slice(-10);
+  el.innerHTML = trail.map((qn, i) => {
+    const last = i === trail.length - 1;
+    return `<span class="${last ? '' : 'crumb'}" data-nav="${esc(qn)}" style="${last ? 'color:#c9d1d9;font-weight:600' : ''}">${esc(shortName(qn))}</span>${i < trail.length - 1 ? '<span class="crumb-sep">›</span>' : ''}`;
   }).join('');
-  el.querySelectorAll('.crumb').forEach(c => c.addEventListener('click', () => navigate(c.dataset.qn)));
 }
 
 async function loadSymbol(qn) {
-  const data = await api('/api/symbol', { qn });
-  if (!data || !data.node) { $('center').innerHTML = '<div class="empty">Symbol not found</div>'; return; }
+  $('center').innerHTML = '<div class="loading">Loading...</div>';
+  $('inbound-content').innerHTML = '<div class="loading">Loading...</div>';
+  $('outbound-content').innerHTML = '<div class="loading">Loading...</div>';
+
+  let data;
+  try { data = await api('/api/symbol', { qn }); }
+  catch { $('center').innerHTML = '<div class="empty">Error loading symbol</div>'; return; }
+
+  if (!data?.node) { $('center').innerHTML = '<div class="empty">Symbol not found</div>'; return; }
 
   const { node, edges } = data;
   const inbound = edges.filter(e => e.target_qn === qn && e.source_qn !== qn);
@@ -164,94 +182,84 @@ async function loadSymbol(qn) {
 
 function renderCenter(node, edges) {
   const meta = node.metadata || {};
-  let html = `
-    <div class="symbol-name">${typeTag(node.type)} ${node.name}</div>
-    <div class="symbol-qn">${node.qualified_name}</div>
-    <div class="symbol-meta">
-      <span class="meta-key">File</span><span class="meta-val"><a href="#">${node.file_path?.split('/').slice(-3).join('/') || '(inferred)'}</a></span>
-      <span class="meta-key">Lines</span><span class="meta-val">${node.start_line || '?'}–${node.end_line || '?'}</span>
-  `;
-  if (meta.visibility) html += `<span class="meta-key">Visibility</span><span class="meta-val">${meta.visibility}</span>`;
-  if (meta.static) html += `<span class="meta-key">Static</span><span class="meta-val">yes</span>`;
-  if (meta.params?.length) html += `<span class="meta-key">Params</span><span class="meta-val">${meta.params.map(p => `${p.type || ''}${p.type ? ' ' : ''}$${p.name}`).join(', ')}</span>`;
-  if (meta.inferred) html += `<span class="meta-key">Inferred</span><span class="meta-val">yes (not defined in source)</span>`;
-  if (meta.http_method) html += `<span class="meta-key">HTTP</span><span class="meta-val">${meta.http_method} ${meta.path}</span>`;
-  if (meta.table) html += `<span class="meta-key">Table</span><span class="meta-val">${meta.table}</span>`;
-  html += `</div>`;
+  const el = document.createElement('div');
 
-  // Relationships
+  let h = `<div class="symbol-name">${typeTag(node.type)} ${esc(node.name)}</div>`;
+  h += `<div class="symbol-qn">${esc(node.qualified_name)}</div>`;
+  h += `<div class="symbol-meta">`;
+  h += `<span class="meta-key">File</span><span class="meta-val">${esc(node.file_path?.split('/').slice(-3).join('/') || '(inferred)')}</span>`;
+  h += `<span class="meta-key">Lines</span><span class="meta-val">${node.start_line || '?'}–${node.end_line || '?'}</span>`;
+  if (meta.visibility) h += `<span class="meta-key">Visibility</span><span class="meta-val">${esc(meta.visibility)}</span>`;
+  if (meta.static) h += `<span class="meta-key">Static</span><span class="meta-val">yes</span>`;
+  if (meta.params?.length) h += `<span class="meta-key">Params</span><span class="meta-val">${esc(meta.params.map(p => `${p.type || ''} $${p.name}`).join(', '))}</span>`;
+  if (meta.inferred) h += `<span class="meta-key">Inferred</span><span class="meta-val">yes</span>`;
+  if (meta.http_method) h += `<span class="meta-key">HTTP</span><span class="meta-val">${esc(meta.http_method)} ${esc(meta.path || '')}</span>`;
+  h += `</div>`;
+
   const relationships = edges.filter(e => e.type === 'HAS_RELATIONSHIP' && e.source_qn === node.qualified_name);
   if (relationships.length) {
-    html += `<div class="section"><div class="section-title">Relationships</div>`;
+    h += `<div class="section"><div class="section-title">Relationships (${relationships.length})</div>`;
     for (const r of relationships) {
-      const meta = r.metadata ? JSON.parse(r.metadata) : {};
-      html += `<div class="rel-item" data-qn="${r.target_qn}" onclick="navigate('${r.target_qn}')">${meta.method || ''} → ${r.target_name} <span class="rel-meta">(${meta.relationship || ''})</span></div>`;
+      const m = r.metadata ? JSON.parse(r.metadata) : {};
+      h += `<div class="nav-link" data-nav="${esc(r.target_qn)}">${esc(m.method || '')} → ${esc(r.target_name)} <span class="rel-meta">(${esc(m.relationship || '')})</span></div>`;
     }
-    html += `</div>`;
+    h += `</div>`;
   }
 
-  // Table mapping
   const tables = edges.filter(e => e.type === 'MAPS_TO_TABLE' && e.source_qn === node.qualified_name);
   if (tables.length) {
-    html += `<div class="section"><div class="section-title">Database Table</div>`;
+    h += `<div class="section"><div class="section-title">Database Table</div>`;
     for (const t of tables) {
-      const meta = t.metadata ? JSON.parse(t.metadata) : {};
-      html += `<div style="color:#3fb950;font-weight:500">${meta.table}</div>`;
+      const m = t.metadata ? JSON.parse(t.metadata) : {};
+      h += `<div style="color:#3fb950;font-weight:500">${esc(m.table || '')}</div>`;
     }
-    html += `</div>`;
+    h += `</div>`;
   }
 
-  // Observer triggers
   const triggers = edges.filter(e => e.type === 'TRIGGERS_OBSERVER' && e.source_qn === node.qualified_name);
   if (triggers.length) {
-    html += `<div class="section"><div class="section-title">Observer Triggers</div>`;
+    h += `<div class="section"><div class="section-title">Observer Triggers (${triggers.length})</div>`;
     for (const t of triggers) {
-      const meta = t.metadata ? JSON.parse(t.metadata) : {};
-      html += `<div class="rel-item" data-qn="${t.target_qn}" onclick="navigate('${t.target_qn}')">${meta.event} → ${shortName(t.target_qn)} <span class="rel-meta">(${meta.observer ? shortName(meta.observer) : ''})</span></div>`;
+      const m = t.metadata ? JSON.parse(t.metadata) : {};
+      h += `<div class="nav-link" data-nav="${esc(t.target_qn)}">${esc(m.event || '')} → ${esc(shortName(t.target_qn))} <span class="rel-meta">(${esc(m.observer ? shortName(m.observer) : '')})</span></div>`;
     }
-    html += `</div>`;
+    h += `</div>`;
   }
 
-  $('center').innerHTML = html;
+  $('center').innerHTML = h;
 }
 
 function renderEdges(container, edges, side) {
   const grouped = {};
   for (const e of edges) {
-    const type = e.type;
-    if (!grouped[type]) grouped[type] = [];
+    if (!grouped[e.type]) grouped[e.type] = [];
     const qn = side === 'source' ? e.source_qn : e.target_qn;
     const name = side === 'source' ? e.source_name : e.target_name;
     const nodeType = side === 'source' ? e.source_type : e.target_type;
-    if (!grouped[type].find(x => x.qn === qn)) {
-      grouped[type].push({ qn, name, nodeType, metadata: e.metadata });
+    if (!grouped[e.type].find(x => x.qn === qn)) {
+      grouped[e.type].push({ qn, name, nodeType });
     }
   }
 
   const structural = new Set(['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS', 'CONTAINS_FILE']);
-  const sortedTypes = Object.keys(grouped).sort((a, b) => {
-    if (structural.has(a) && !structural.has(b)) return 1;
-    if (!structural.has(a) && structural.has(b)) return -1;
+  const sorted = Object.keys(grouped).sort((a, b) => {
+    if (structural.has(a) !== structural.has(b)) return structural.has(a) ? 1 : -1;
     return a.localeCompare(b);
   });
 
-  let html = '';
-  for (const type of sortedTypes) {
-    const items = grouped[type];
-    html += `<div class="edge-group">
-      <div class="edge-type-label">${type} (${items.length})</div>
-      <ul class="edge-list">`;
-    for (const item of items.slice(0, 50)) {
-      html += `<li class="edge-item" data-qn="${item.qn}" onclick="navigate('${item.qn.replace(/\\/g, '\\\\')}')">
-        <span class="edge-item-name">${typeTag(item.nodeType)} ${item.name}</span>
-        <span class="edge-item-qn">${item.qn}</span>
-      </li>`;
-    }
-    if (items.length > 50) html += `<li class="edge-item"><span class="edge-item-name" style="color:#484f58">... and ${items.length - 50} more</span></li>`;
-    html += `</ul></div>`;
-  }
+  if (sorted.length === 0) { container.innerHTML = '<div class="empty">None</div>'; return; }
 
-  container.innerHTML = html || '<div class="empty">None</div>';
+  let h = '';
+  for (const type of sorted) {
+    const items = grouped[type];
+    h += `<div class="edge-group"><div class="edge-type-label">${esc(type)} (${items.length})</div><ul class="edge-list">`;
+    for (const item of items.slice(0, 50)) {
+      h += `<li class="edge-item" data-nav="${esc(item.qn)}"><span class="edge-item-name">${typeTag(item.nodeType)} ${esc(item.name)}</span><span class="edge-item-qn">${esc(item.qn)}</span></li>`;
+    }
+    if (items.length > 50) h += `<li class="edge-item"><span class="edge-item-qn">... and ${items.length - 50} more</span></li>`;
+    h += `</ul></div>`;
+  }
+  container.innerHTML = h;
 }
 </script>
 </body>
