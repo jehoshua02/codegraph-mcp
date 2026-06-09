@@ -155,8 +155,9 @@ async function loadSymbol(qn) {
   if (!data?.node) { $('center').innerHTML = '<div class="empty">Symbol not found</div>'; return; }
 
   const { node, edges } = data;
-  const inbound = edges.filter(e => e.target_qn === qn && e.source_qn !== qn);
-  const outbound = edges.filter(e => e.source_qn === qn && e.target_qn !== qn);
+  const centerOnly = new Set(['HAS_METHOD', 'HAS_PROPERTY', 'DEFINES', 'CONTAINS_FILE', 'HAS_RELATIONSHIP', 'MAPS_TO_TABLE', 'TRIGGERS_OBSERVER', 'EXTENDS', 'IMPLEMENTS', 'USES_TRAIT']);
+  const inbound = edges.filter(e => e.target_qn === qn && e.source_qn !== qn && !centerOnly.has(e.type));
+  const outbound = edges.filter(e => e.source_qn === qn && e.target_qn !== qn && !centerOnly.has(e.type));
 
   renderCenter(node, edges);
   renderEdges($('inbound-content'), inbound, 'source');
@@ -178,6 +179,40 @@ function renderCenter(node, edges) {
   if (meta.inferred) h += `<span class="meta-key">Inferred</span><span class="meta-val">yes</span>`;
   if (meta.http_method) h += `<span class="meta-key">HTTP</span><span class="meta-val">${esc(meta.http_method)} ${esc(meta.path || '')}</span>`;
   h += `</div>`;
+
+  const extendsEdges = edges.filter(e => e.type === 'EXTENDS' && e.source_qn === node.qualified_name);
+  const implementsEdges = edges.filter(e => e.type === 'IMPLEMENTS' && e.source_qn === node.qualified_name);
+  const traitsEdges = edges.filter(e => e.type === 'USES_TRAIT' && e.source_qn === node.qualified_name);
+  const extendedBy = edges.filter(e => e.type === 'EXTENDS' && e.target_qn === node.qualified_name);
+  const implementedBy = edges.filter(e => e.type === 'IMPLEMENTS' && e.target_qn === node.qualified_name);
+
+  if (extendsEdges.length || implementsEdges.length || traitsEdges.length || extendedBy.length || implementedBy.length) {
+    h += `<div class="section"><div class="section-title">Hierarchy</div>`;
+    for (const e of extendsEdges) h += `<div class="nav-link" data-nav="${esc(e.target_qn)}">extends ${esc(e.target_name)}</div>`;
+    for (const e of implementsEdges) h += `<div class="nav-link" data-nav="${esc(e.target_qn)}">implements ${esc(e.target_name)}</div>`;
+    for (const e of traitsEdges) h += `<div class="nav-link" data-nav="${esc(e.target_qn)}">uses ${esc(e.target_name)}</div>`;
+    for (const e of extendedBy) h += `<div class="nav-link" data-nav="${esc(e.source_qn)}">← extended by ${esc(e.source_name)}</div>`;
+    for (const e of implementedBy) h += `<div class="nav-link" data-nav="${esc(e.source_qn)}">← implemented by ${esc(e.source_name)}</div>`;
+    h += `</div>`;
+  }
+
+  const methods = edges.filter(e => e.type === 'HAS_METHOD' && e.source_qn === node.qualified_name);
+  if (methods.length) {
+    h += `<div class="section"><div class="section-title">Methods (${methods.length})</div>`;
+    for (const m of methods) {
+      h += `<div class="nav-link" data-nav="${esc(m.target_qn)}">${esc(m.target_name)}</div>`;
+    }
+    h += `</div>`;
+  }
+
+  const properties = edges.filter(e => e.type === 'HAS_PROPERTY' && e.source_qn === node.qualified_name);
+  if (properties.length) {
+    h += `<div class="section"><div class="section-title">Properties (${properties.length})</div>`;
+    for (const p of properties) {
+      h += `<div class="nav-link" data-nav="${esc(p.target_qn)}">${esc(p.target_name)}</div>`;
+    }
+    h += `</div>`;
+  }
 
   const relationships = edges.filter(e => e.type === 'HAS_RELATIONSHIP' && e.source_qn === node.qualified_name);
   if (relationships.length) {
