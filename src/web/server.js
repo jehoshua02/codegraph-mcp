@@ -44,15 +44,34 @@ const server = createServer((req, res) => {
     const node = withDb(db => db.prepare('SELECT * FROM nodes WHERE qualified_name = ?').get(qn));
     if (!node) return json(res, null);
     if (node.metadata) try { node.metadata = JSON.parse(node.metadata); } catch {}
-    const edges = withDb(db => db.prepare(`
-      SELECT e.type, e.metadata,
-        s.qualified_name as source_qn, s.name as source_name, s.type as source_type,
-        t.qualified_name as target_qn, t.name as target_name, t.type as target_type
-      FROM edges e
-      JOIN nodes s ON s.id = e.source_id
-      JOIN nodes t ON t.id = e.target_id
-      WHERE s.qualified_name = ? OR t.qualified_name = ?
-    `).all(qn, qn));
+
+    const edges = withDb(db => {
+      const directEdges = db.prepare(`
+        SELECT e.type, e.metadata,
+          s.qualified_name as source_qn, s.name as source_name, s.type as source_type,
+          t.qualified_name as target_qn, t.name as target_name, t.type as target_type
+        FROM edges e
+        JOIN nodes s ON s.id = e.source_id
+        JOIN nodes t ON t.id = e.target_id
+        WHERE s.qualified_name = ? OR t.qualified_name = ?
+      `).all(qn, qn);
+
+      if (node.type !== 'Class' && node.type !== 'Interface' && node.type !== 'Trait') return directEdges;
+
+      const memberEdges = db.prepare(`
+        SELECT e.type, e.metadata,
+          s.qualified_name as source_qn, s.name as source_name, s.type as source_type,
+          t.qualified_name as target_qn, t.name as target_name, t.type as target_type
+        FROM edges e
+        JOIN nodes s ON s.id = e.source_id
+        JOIN nodes t ON t.id = e.target_id
+        WHERE (s.qualified_name LIKE ? OR t.qualified_name LIKE ?)
+        AND e.type NOT IN ('HAS_METHOD', 'HAS_PROPERTY', 'DEFINES', 'IMPORTS', 'CONTAINS_FILE')
+      `).all(qn + '::%', qn + '::%');
+
+      return [...directEdges, ...memberEdges];
+    });
+
     return json(res, { node, edges });
   }
 
