@@ -12,12 +12,8 @@
   #header h1 { font-size: 14px; color: #58a6ff; font-weight: 600; }
   #search { flex: 1; max-width: 500px; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; font-family: inherit; }
   #search:focus { outline: none; border-color: #58a6ff; }
-  #breadcrumbs { padding: 4px 16px; background: #161b22; border-bottom: 1px solid #21262d; font-size: 12px; color: #8b949e; min-height: 24px; display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
-  .crumb { cursor: pointer; color: #58a6ff; }
-  .crumb:hover { text-decoration: underline; }
-  .crumb-sep { color: #484f58; }
 
-  #main { display: grid; grid-template-columns: 1fr 1.2fr 1fr; height: calc(100vh - 68px); }
+  #main { display: grid; grid-template-columns: 1fr 1.2fr 1fr; height: calc(100vh - 40px); }
   .panel { overflow-y: auto; padding: 12px; border-right: 1px solid #21262d; }
   .panel:last-child { border-right: none; }
   .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #8b949e; margin-bottom: 8px; font-weight: 600; }
@@ -70,7 +66,6 @@
       <div id="search-results"></div>
     </div>
   </div>
-  <div id="breadcrumbs"></div>
   <div id="main">
     <div class="panel" id="left"><div class="panel-title">Inbound</div><div id="inbound-content"></div></div>
     <div class="panel" id="center"><div class="empty">Search for a symbol to begin</div></div>
@@ -78,7 +73,6 @@
   </div>
 
 <script>
-const navHistory = [];
 let debounceTimer = null;
 
 const $ = id => document.getElementById(id);
@@ -136,9 +130,7 @@ async function doSearch(query) {
 function navigate(qn) {
   $('search-results').style.display = 'none';
   $('search').value = '';
-  navHistory.push(qn);
   window.history.pushState({ qn }, '', `#${encodeURIComponent(qn)}`);
-  renderBreadcrumbs();
   loadSymbol(qn);
 }
 
@@ -148,17 +140,8 @@ window.addEventListener('popstate', e => {
 
 window.addEventListener('load', () => {
   const hash = decodeURIComponent(location.hash.slice(1));
-  if (hash) { navHistory.push(hash); renderBreadcrumbs(); loadSymbol(hash); }
+  if (hash) loadSymbol(hash);
 });
-
-function renderBreadcrumbs() {
-  const el = $('breadcrumbs');
-  const trail = navHistory.slice(-10);
-  el.innerHTML = trail.map((qn, i) => {
-    const last = i === trail.length - 1;
-    return `<span class="${last ? '' : 'crumb'}" data-nav="${esc(qn)}" style="${last ? 'color:#c9d1d9;font-weight:600' : ''}">${esc(shortName(qn))}</span>${i < trail.length - 1 ? '<span class="crumb-sep">›</span>' : ''}`;
-  }).join('');
-}
 
 async function loadSymbol(qn) {
   $('center').innerHTML = '<div class="loading">Loading...</div>';
