@@ -25,6 +25,11 @@
   .edge-item:hover { background: #1f2937; }
   .edge-item-name { color: #c9d1d9; font-weight: 500; }
   .edge-item-qn { color: #8b949e; font-size: 11px; word-break: break-all; }
+  .edge-class-group { margin: 4px 0; }
+  .edge-class-label { font-size: 12px; font-weight: 600; color: #58a6ff; padding: 3px 8px; cursor: pointer; }
+  .edge-class-label:hover { text-decoration: underline; }
+  .edge-class-group .edge-list { padding-left: 16px; }
+  .edge-class-group .edge-item { padding: 2px 8px; }
 
   #center { padding: 16px; }
   .symbol-name { font-size: 18px; font-weight: 700; color: #f0f6fc; margin-bottom: 4px; }
@@ -247,35 +252,52 @@ function renderCenter(node, edges) {
   $('center').innerHTML = h;
 }
 
+function classOf(qn) {
+  if (qn.includes('::')) return qn.split('::')[0];
+  return qn;
+}
+
 function renderEdges(container, edges, side) {
-  const grouped = {};
+  const byType = {};
   for (const e of edges) {
-    if (!grouped[e.type]) grouped[e.type] = [];
+    if (!byType[e.type]) byType[e.type] = [];
     const qn = side === 'source' ? e.source_qn : e.target_qn;
     const name = side === 'source' ? e.source_name : e.target_name;
     const nodeType = side === 'source' ? e.source_type : e.target_type;
-    if (!grouped[e.type].find(x => x.qn === qn)) {
-      grouped[e.type].push({ qn, name, nodeType });
+    if (!byType[e.type].find(x => x.qn === qn)) {
+      byType[e.type].push({ qn, name, nodeType, cls: classOf(qn) });
     }
   }
 
-  const structural = new Set(['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS', 'CONTAINS_FILE']);
-  const sorted = Object.keys(grouped).sort((a, b) => {
-    if (structural.has(a) !== structural.has(b)) return structural.has(a) ? 1 : -1;
-    return a.localeCompare(b);
-  });
-
+  const sorted = Object.keys(byType).sort();
   if (sorted.length === 0) { container.innerHTML = '<div class="empty">None</div>'; return; }
 
   let h = '';
   for (const type of sorted) {
-    const items = grouped[type];
-    h += `<div class="edge-group"><div class="edge-type-label">${esc(type)} (${items.length})</div><ul class="edge-list">`;
-    for (const item of items.slice(0, 50)) {
-      h += `<li class="edge-item" data-nav="${esc(item.qn)}"><span class="edge-item-name">${typeTag(item.nodeType)} ${esc(item.name)}</span><span class="edge-item-qn">${esc(item.qn)}</span></li>`;
+    const items = byType[type];
+    h += `<div class="edge-group"><div class="edge-type-label">${esc(type)} (${items.length})</div>`;
+
+    const byClass = {};
+    for (const item of items) {
+      if (!byClass[item.cls]) byClass[item.cls] = [];
+      byClass[item.cls].push(item);
     }
-    if (items.length > 50) h += `<li class="edge-item"><span class="edge-item-qn">... and ${items.length - 50} more</span></li>`;
-    h += `</ul></div>`;
+
+    const classes = Object.keys(byClass).sort();
+    for (const cls of classes) {
+      const members = byClass[cls];
+      if (members.length === 1 && members[0].qn === cls) {
+        h += `<div class="edge-item" data-nav="${esc(cls)}"><span class="edge-item-name">${typeTag(members[0].nodeType)} ${esc(shortName(cls))}</span></div>`;
+      } else {
+        h += `<div class="edge-class-group"><div class="edge-class-label" data-nav="${esc(cls)}">${esc(shortName(cls))}</div><ul class="edge-list">`;
+        for (const item of members.slice(0, 30)) {
+          h += `<li class="edge-item" data-nav="${esc(item.qn)}"><span class="edge-item-name">${esc(item.name)}</span></li>`;
+        }
+        if (members.length > 30) h += `<li class="edge-item"><span class="edge-item-qn">... and ${members.length - 30} more</span></li>`;
+        h += `</ul></div>`;
+      }
+    }
+    h += `</div>`;
   }
   container.innerHTML = h;
 }
