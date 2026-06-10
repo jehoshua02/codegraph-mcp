@@ -174,7 +174,7 @@ export function graphStats(db) {
 
 export function graphQuery(db, { sql, limit = 100 }) {
   const normalized = sql.trim().toUpperCase();
-  if (!normalized.startsWith('SELECT')) {
+  if (!normalized.startsWith('SELECT') && !normalized.startsWith('WITH')) {
     throw new Error('Only SELECT queries are allowed');
   }
 
