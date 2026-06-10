@@ -9,6 +9,7 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
+    if (!content.includes('extends') && !content.includes('implements') && !content.includes('use ')) return { nodes: [], edges: [] };
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectInheritanceEdges(tree.rootNode, namespace, filePath, context) };
   },

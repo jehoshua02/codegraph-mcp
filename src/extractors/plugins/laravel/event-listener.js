@@ -8,6 +8,7 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
+    if (!content.includes('$listen')) return { nodes: [], edges: [] };
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectEventListenerMappings(tree.rootNode, namespace, filePath, context) };
   },

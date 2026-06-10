@@ -8,6 +8,7 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
+    if (!content.includes('observe(')) return { nodes: [], edges: [] };
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectObserverRegistrations(tree.rootNode, namespace, filePath, context) };
   },

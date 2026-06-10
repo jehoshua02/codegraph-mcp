@@ -13,6 +13,7 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
+    if (!content.includes('hasMany') && !content.includes('hasOne') && !content.includes('belongsTo') && !content.includes('morphMany') && !content.includes('morphOne') && !content.includes('morphTo') && !content.includes('hasManyThrough') && !content.includes('hasOneThrough')) return { nodes: [], edges: [] };
     const namespace = extractNamespace(tree.rootNode);
     return { nodes: [], edges: collectRelationships(tree.rootNode, namespace, filePath, context) };
   },

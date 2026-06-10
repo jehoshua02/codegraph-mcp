@@ -11,6 +11,7 @@ export default {
   ],
   fileFilter: (fp) => fp.endsWith('.php'),
   extract(filePath, content, tree, context) {
+    if (!content.includes('Route::')) return { nodes: [], edges: [] };
     const namespace = extractNamespace(tree.rootNode);
     const closureVars = collectClosureVariables(tree.rootNode);
     const closureVarIds = new Set([...closureVars.values()].map(n => nodeKey(n)));
