@@ -76,6 +76,51 @@ function runPostExtract(extractors, nodes, edges) {
   }
 }
 
+function resolveInheritedMethods(nodes, edges) {
+  const nodesByQn = new Map();
+  for (const n of nodes) {
+    if (n.qualified_name) nodesByQn.set(n.qualified_name, n);
+  }
+
+  const parentMap = new Map();
+  for (const e of edges) {
+    if (e.type === 'EXTENDS' || e.type === 'USES_TRAIT') {
+      if (!parentMap.has(e.source)) parentMap.set(e.source, []);
+      parentMap.get(e.source).push(e.target);
+    }
+  }
+
+  const inferredMethods = nodes.filter(n => n.metadata?.inferred && n.type === 'Method' && n.qualified_name?.includes('::'));
+
+  for (const method of inferredMethods) {
+    const [classQn, methodName] = method.qualified_name.split('::');
+    const resolved = findMethodInAncestors(classQn, methodName, parentMap, nodesByQn, new Set());
+    if (resolved) {
+      edges.push({
+        source: method.qualified_name,
+        target: resolved,
+        type: 'CALLS',
+        metadata: { inherited: true },
+      });
+    }
+  }
+}
+
+function findMethodInAncestors(classQn, methodName, parentMap, nodesByQn, visited) {
+  if (visited.has(classQn)) return null;
+  visited.add(classQn);
+
+  const parents = parentMap.get(classQn) || [];
+  for (const parent of parents) {
+    const candidateQn = `${parent}::${methodName}`;
+    const candidate = nodesByQn.get(candidateQn);
+    if (candidate && !candidate.metadata?.inferred) return candidateQn;
+    const deeper = findMethodInAncestors(parent, methodName, parentMap, nodesByQn, visited);
+    if (deeper) return deeper;
+  }
+  return null;
+}
+
 function deduplicateNodes(nodes) {
   const seen = new Map();
   return nodes.filter(n => {
@@ -133,6 +178,7 @@ export async function index(rootDir, dbPath, { project, pluginExtractors = [] } 
   runPostExtract(extractors, nodes, edges);
   const inferred = inferMissingNodes(nodes, edges);
   nodes.push(...inferred);
+  resolveInheritedMethods(nodes, edges);
 
   const dedupedNodes = deduplicateNodes(nodes);
   persistGraph(db, dedupedNodes, edges);
