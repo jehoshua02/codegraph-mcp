@@ -106,6 +106,86 @@ export function symbolTrace(db, { qualified_name, direction = 'inbound', edge_ty
   return results.slice(0, limit);
 }
 
+export function impactAnalysis(db, { qualified_name, direction = 'both', depth = 10, edge_type }) {
+  if (direction === 'both') {
+    const downstream = runImpactBfs(db, qualified_name, 'outbound', depth, edge_type);
+    const upstream = runImpactBfs(db, qualified_name, 'inbound', depth, edge_type);
+    return { downstream, upstream };
+  }
+  return { [direction === 'inbound' ? 'upstream' : 'downstream']: runImpactBfs(db, qualified_name, direction, depth, edge_type) };
+}
+
+function runImpactBfs(db, qualified_name, direction, depth, edge_type) {
+  const traverseTypes = edge_type
+    ? (Array.isArray(edge_type) ? edge_type : [edge_type])
+    : ['CALLS', 'DISPATCHES_JOB', 'TRIGGERS_OBSERVER', 'DISPATCHES_EVENT', 'HANDLES_EVENT'];
+
+  const idByQn = new Map();
+  const qnById = new Map();
+  const idLookup = db.prepare('SELECT id FROM nodes WHERE qualified_name = ?');
+  const startRow = idLookup.get(qualified_name);
+  if (!startRow) return { by_edge_type: {}, stats: { nodesVisited: 0, depth } };
+
+  idByQn.set(qualified_name, startRow.id);
+  qnById.set(startRow.id, qualified_name);
+
+  const outStmt = db.prepare(`
+    SELECT t.id, t.name, t.qualified_name, t.type, e.type as edge_type
+    FROM edges e JOIN nodes t ON t.id = e.target_id
+    WHERE e.source_id = ? AND e.type IN (${traverseTypes.map(() => '?').join(',')})
+  `);
+  const inStmt = db.prepare(`
+    SELECT s.id, s.name, s.qualified_name, s.type, e.type as edge_type
+    FROM edges e JOIN nodes s ON s.id = e.source_id
+    WHERE e.target_id = ? AND e.type IN (${traverseTypes.map(() => '?').join(',')})
+  `);
+  const stmt = direction === 'inbound' ? inStmt : outStmt;
+
+  const visited = new Set();
+  const queue = [{ id: startRow.id, qn: qualified_name, hop: 0 }];
+  const byEdgeType = {};
+  const classesInTrace = new Set();
+
+  while (queue.length > 0) {
+    const { id, qn, hop } = queue.shift();
+    if (hop > depth || visited.has(id)) continue;
+    visited.add(id);
+
+    if (qn.includes('::')) classesInTrace.add(qn.split('::')[0]);
+    else classesInTrace.add(qn);
+
+    const rows = stmt.all(id, ...traverseTypes);
+    for (const row of rows) {
+      const et = row.edge_type;
+      if (!byEdgeType[et]) byEdgeType[et] = [];
+
+      if (!visited.has(row.id)) {
+        if (!byEdgeType[et].find(x => x.qualified_name === row.qualified_name)) {
+          byEdgeType[et].push({ name: row.name, qualified_name: row.qualified_name, type: row.type, hop: hop + 1 });
+        }
+        queue.push({ id: row.id, qn: row.qualified_name, hop: hop + 1 });
+      }
+    }
+  }
+
+  const tableStmt = db.prepare("SELECT json_extract(e.metadata, '$.table') as tbl FROM edges e JOIN nodes n ON n.id = e.source_id WHERE n.qualified_name = ? AND e.type = 'MAPS_TO_TABLE'");
+  const tables = [];
+  for (const cls of classesInTrace) {
+    const row = tableStmt.get(cls);
+    if (row?.tbl) tables.push({ name: row.tbl, qualified_name: `table::${row.tbl}`, type: 'Table', hop: 0 });
+  }
+  if (tables.length > 0) byEdgeType['MAPS_TO_TABLE'] = tables;
+
+  for (const et of Object.keys(byEdgeType)) {
+    byEdgeType[et].sort((a, b) => a.hop - b.hop || a.qualified_name.localeCompare(b.qualified_name));
+  }
+
+  return {
+    by_edge_type: byEdgeType,
+    stats: { nodesVisited: visited.size, depth },
+  };
+}
+
 const STRUCTURAL_EDGES = ['DEFINES', 'HAS_METHOD', 'HAS_PROPERTY', 'IMPORTS'];
 
 export function symbolUnreferenced(db, { node_type, edge_type, exclude_structural = true, limit = 100 }) {

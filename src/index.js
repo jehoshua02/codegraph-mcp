@@ -5,7 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { resolve } from 'path';
 import { index } from './indexer.js';
-import { openReadOnly, symbolSearch, symbolInbound, symbolOutbound, symbolTrace, symbolUnreferenced, edgeSearch, graphStats, graphQuery } from './queries.js';
+import { openReadOnly, symbolSearch, symbolInbound, symbolOutbound, symbolTrace, symbolUnreferenced, edgeSearch, graphStats, graphQuery, impactAnalysis } from './queries.js';
 
 const server = new McpServer({
   name: 'codegraph-mcp',
@@ -105,6 +105,15 @@ server.tool('graph_query',
   { sql: z.string(), limit: z.number().optional() },
   async (params) => {
     const results = withDb(db => graphQuery(db, params));
+    return { content: [{ type: 'text', text: JSON.stringify(results) }] };
+  }
+);
+
+server.tool('impact_analysis',
+  'Trace all downstream and upstream impact from a symbol. Returns results grouped by edge type with table mappings. Direction: both (default), outbound (downstream only), inbound (upstream only). Fast BFS.',
+  { qualified_name: z.string(), direction: z.enum(['both', 'inbound', 'outbound']).optional(), depth: z.number().optional(), edge_type: edgeTypeSchema },
+  async (params) => {
+    const results = withDb(db => impactAnalysis(db, params));
     return { content: [{ type: 'text', text: JSON.stringify(results) }] };
   }
 );
