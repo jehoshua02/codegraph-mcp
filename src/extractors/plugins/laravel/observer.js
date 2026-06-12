@@ -13,6 +13,7 @@ export default {
     return { nodes: [], edges: collectObserverRegistrations(tree.rootNode, namespace, filePath, context) };
   },
   postExtract(nodes, edges) {
+    propagateObserversToDescendants(nodes, edges);
     deriveObserverTriggers(nodes, edges);
   },
 };
@@ -53,8 +54,8 @@ function extractObserverClass(argsNode, namespace, context, filePath) {
         if (inner.type === 'object_creation_expression') {
           return resolveObjectCreation(inner, namespace, context, filePath);
         }
-        // App::make(ObserverClass::class)
-        if (inner.type === 'scoped_call_expression' || inner.type === 'member_call_expression') {
+        // App::make(ObserverClass::class), resolve(ObserverClass::class)
+        if (inner.type === 'scoped_call_expression' || inner.type === 'member_call_expression' || inner.type === 'function_call_expression') {
           const innerArgs = inner.childForFieldName('arguments');
           if (innerArgs) {
             const resolved = extractObserverClass(innerArgs, namespace, context, filePath);
@@ -122,6 +123,45 @@ function collectObserverRegistrations(node, namespace, filePath, context) {
   }
 
   return edges;
+}
+
+function propagateObserversToDescendants(nodes, edges) {
+  const observesEdges = edges.filter(e => e.type === 'OBSERVES');
+  if (observesEdges.length === 0) return;
+
+  const childrenOf = new Map();
+  for (const edge of edges) {
+    if (edge.type === 'EXTENDS') {
+      if (!childrenOf.has(edge.target)) childrenOf.set(edge.target, []);
+      childrenOf.get(edge.target).push(edge.source);
+    }
+  }
+
+  const existingPairs = new Set(observesEdges.map(e => `${e.source}::${e.target}`));
+
+  for (const obs of observesEdges) {
+    const descendants = [];
+    const queue = [obs.target];
+    while (queue.length > 0) {
+      const current = queue.shift();
+      for (const child of (childrenOf.get(current) || [])) {
+        descendants.push(child);
+        queue.push(child);
+      }
+    }
+
+    for (const child of descendants) {
+      const key = `${obs.source}::${child}`;
+      if (existingPairs.has(key)) continue;
+      existingPairs.add(key);
+      edges.push({
+        source: obs.source,
+        target: child,
+        type: 'OBSERVES',
+        metadata: { observer: obs.source, model: child, inherited_from: obs.target },
+      });
+    }
+  }
 }
 
 const ELOQUENT_EVENTS = new Set([
